@@ -1,0 +1,20 @@
+diff --git a/runner/src/snes/interp_bridge.c b/runner/src/snes/interp_bridge.c
+index dbff9dd..4d5c0cb 100644
+--- a/runner/src/snes/interp_bridge.c
++++ b/runner/src/snes/interp_bridge.c
+@@ -1949,7 +1949,15 @@ static int _interp_run_core(CpuState *cpu, uint32_t entry_pc24,
+             cpu->master_cycles += _master;
+             /* DRAM refresh tax — shared watermark with the AOT tier's
+              * WatchdogCheck charge; see common_cpu_infra.c. */
++            uint64_t ackman_before_refresh = cpu->master_cycles;
+             snes_refresh_charge();
++#ifdef SNESRECOMP_CLOCKED_BEAM
++            if (s_lle_master_deadline && cpu->master_cycles >= s_lle_master_deadline) {
++                extern void AckmanTimingCrossing(uint32_t, uint64_t, uint64_t, uint64_t);
++                AckmanTimingCrossing(pc_before, ackman_before_refresh - _master,
++                                     ackman_before_refresh, cpu->master_cycles);
++            }
++#endif
+             cpu->coprocessor_master_cycles = cpu->master_cycles;
+             if (g_snes) snes_sync_master_clock(g_snes, cpu->master_cycles);
+             if (g_snes && g_snes->cart)

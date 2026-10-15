@@ -1,0 +1,86 @@
+diff --git a/runner/src/desktop/config.h b/runner/src/desktop/config.h
+--- a/runner/src/desktop/config.h
++++ b/runner/src/desktop/config.h
+@@ -129,7 +129,8 @@
+   char *memory_buffer;
+   const char *shader;
+   bool enable_shaders,integer_scaling;
+-  char selected_shader[256];
++  bool screenshot_internal;
++  char selected_shader[1024];
+ 
+   bool enable_gamepad[2];
+   /* Which input device drives each player, from config.ini [Controller]
+diff --git a/runner/src/desktop/mmx_config.c b/runner/src/desktop/mmx_config.c
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -504,6 +504,11 @@
+       return ParseBool(value,&g_config.enable_shaders);
+     } else if (StringEqualsNoCase(key, "IntegerScaling")) {
+       return ParseBool(value,&g_config.integer_scaling);
++    } else if (StringEqualsNoCase(key, "ScreenshotResolution")) {
++      if(StringEqualsNoCase(value,"InternalResolution"))g_config.screenshot_internal=true;
++      else if(StringEqualsNoCase(value,"WindowSize"))g_config.screenshot_internal=false;
++      else return false;
++      return true;
+     } else if (StringEqualsNoCase(key, "SelectedShader")) {
+       SDL_strlcpy(g_config.selected_shader,value,sizeof(g_config.selected_shader));return true;
+     } else if (StringEqualsNoCase(key, "Shader")) {
+@@ -727,6 +732,7 @@
+   NUMBER("Graphics", "Widescreen", g_config.widescreen);
+   TEXT("Graphics", "Renderer", g_config.renderer[0] ? g_config.renderer : "auto");
+   NUMBER("Graphics", "IntegerScaling", g_config.integer_scaling);
++  TEXT("Graphics", "ScreenshotResolution", g_config.screenshot_internal?"InternalResolution":"WindowSize");
+   NUMBER("Graphics", "EnableShaders", g_config.enable_shaders);
+   TEXT("Graphics", "SelectedShader", g_config.selected_shader);
+   static const char *const aspects[] = {"4:3", "8:7", "1:1"};
+diff --git a/runner/src/desktop/host_main.c b/runner/src/desktop/host_main.c
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -790,7 +790,8 @@
+   else if(!strcmp(name,"ControllerVibration")){g_config.controller_vibration=value!=0;AckmanRumbleSetEnabled(g_config.controller_vibration);}
+   else if(!strcmp(name,"NoSpriteLimits"))g_config.no_sprite_limits=value!=0;
+   else if(!strcmp(name,"IntegerScaling"))g_config.integer_scaling=value!=0;
+-  else if(!strcmp(name,"EnableShaders"))g_config.enable_shaders=value!=0;
++  else if(!strcmp(name,"EnableShaders"))AckmanMenuSetShaders(value!=0);
++  else if(!strcmp(name,"ScreenshotResolution"))g_config.screenshot_internal=value!=0;
+   else if(!strcmp(name,"Shader"))AckmanMenuSelectShader(value);
+   else if(!strcmp(name,"Mod")) { AckmanMenuModSelect(value);AckmanMenuModTransfer(); }
+   else if(!strcmp(name,"Reboot"))AckmanMenuCommand(ACK_MENU_RESET);
+@@ -1841,6 +1842,7 @@
+ 
+ 
+ static bool SdlRenderer_Init(SDL_Window *window) {
++  AckmanCaptureInit();
+   (void)window;
+ 
+ 
+@@ -1965,7 +1967,7 @@
+     snesrecomp_sdl_render_texture(g_renderer, image, &source,
+                                 &g_sdl_present_rect);
+   AckmanMenuDraw(g_renderer,true);
+-  AckmanCapturePresent(g_renderer);
++  AckmanCapturePresent(g_renderer,g_ackman_last_pixels,g_ackman_last_w,g_ackman_last_h);
+   SDL_RenderPresent(g_renderer);
+ }
+ 
+@@ -3521,6 +3523,7 @@
+   g_renderer_funcs.Destroy();
+   free(g_ackman_last_pixels);g_ackman_last_pixels=NULL;g_ackman_last_capacity=0;
+ 
++  AckmanCaptureShutdown();
+   AckmanMenuShutdown();
+   SDL_DestroyWindow(window);
+   SDL_Quit();
+diff --git a/runner/src/desktop/glsl_shader.c b/runner/src/desktop/glsl_shader.c
+--- a/runner/src/desktop/glsl_shader.c
++++ b/runner/src/desktop/glsl_shader.c
+@@ -317,7 +317,7 @@
+ 
+ static bool IsGlslFilename(const char *filename) {
+   size_t len = strlen(filename);
+-  return len >= 5 && memcmp(filename + len - 5, ".glsl", 5) == 0;
++  return len >= 5 && StringEqualsNoCase(filename + len - 5, ".glsl");
+ }
+ 
+ GlslShader *GlslShader_CreateFromFile(const char *filename) {

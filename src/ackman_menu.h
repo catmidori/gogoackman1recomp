@@ -1,0 +1,106 @@
+#pragma once
+/* Compatibility facade; implementation lives in recomp_menu_core. */
+#include "recomp_menu_core.h"
+#include "ackman_mod_metadata.h"
+#define ACK_MENU_FILE RECOMP_MENU_FILE
+#define ACK_MENU_IPS RECOMP_MENU_IPS
+#define ACK_MENU_LOAD RECOMP_MENU_LOAD
+#define ACK_MENU_QUIT RECOMP_MENU_QUIT
+#define ACK_MENU_RESET RECOMP_MENU_RESET
+#define ACK_MENU_ROM RECOMP_MENU_ROM
+#define ACK_MENU_SAVE RECOMP_MENU_SAVE
+#define ACK_MENU_SAVE_FILE RECOMP_MENU_SAVE_FILE
+#define ACK_SETTINGS_AUDIO RECOMP_SETTINGS_AUDIO
+#define ACK_SETTINGS_FULLSCREEN RECOMP_SETTINGS_FULLSCREEN
+#define ACK_SETTINGS_OUTPUT RECOMP_SETTINGS_OUTPUT
+#define ACK_SETTINGS_REWIND RECOMP_SETTINGS_REWIND
+#define ACK_SETTINGS_RUNAHEAD RECOMP_SETTINGS_RUNAHEAD
+#define ACK_SETTINGS_SIZE RECOMP_SETTINGS_SIZE
+#define ACK_SETTINGS_VOLUME RECOMP_SETTINGS_VOLUME
+#define ACK_SETTINGS_VSYNC RECOMP_SETTINGS_VSYNC
+#define AckmanMenuActiveOutput RecompMenuActiveOutput
+#define AckmanMenuActiveShader RecompMenuActiveShader
+#define AckmanMenuActiveShaders RecompMenuActiveShaders
+#define AckmanMenuAltOwnsInput RecompMenuAltOwnsInput
+#define AckmanMenuClosed RecompMenuClosed
+#define AckmanMenuColdBootPending RecompMenuColdBootPending
+#define AckmanMenuCommand RecompMenuCommand
+#define AckmanMenuConfigure RecompMenuConfigure
+#define AckmanMenuDialogActive RecompMenuDialogActive
+#define AckmanMenuDraw RecompMenuDraw
+#define AckmanMenuEvent RecompMenuEvent
+#define AckmanMenuFullscreenKey RecompMenuFullscreenKey
+#define AckmanMenuHeight RecompMenuHeight
+#define AckmanMenuInactive RecompMenuInactive
+#define AckmanMenuInit RecompMenuInit
+#define AckmanMenuIpsPath RecompMenuIpsPath
+#define AckmanMenuModActivate RecompMenuModActivate
+#define AckmanMenuModActive RecompMenuModActive
+#define AckmanMenuModClick RecompMenuModClick
+#define AckmanMenuModHighlighted RecompMenuModHighlighted
+#define AckmanMenuModMetadata RecompMenuModMetadata
+#define AckmanMenuModName RecompMenuModName
+#define AckmanMenuModSelect RecompMenuModSelect
+#define AckmanMenuModSelected RecompMenuModSelected
+#define AckmanMenuModSetActive RecompMenuModSetActive
+#define AckmanMenuModTransfer RecompMenuModTransfer
+#define AckmanMenuModsChanged RecompMenuModsChanged
+#define AckmanMenuModsCount RecompMenuModsCount
+#define AckmanMenuModsDirectory RecompMenuModsDirectory
+#define AckmanMenuModsInit RecompMenuModsInit
+#define AckmanMenuModsOpened RecompMenuModsOpened
+#define AckmanMenuModsRefresh RecompMenuModsRefresh
+#define AckmanMenuModsSave RecompMenuModsSave
+#define AckmanMenuOpened RecompMenuOpened
+#define AckmanMenuOwnsInput RecompMenuOwnsInput
+#define AckmanMenuQueueCommand RecompMenuQueueCommand
+#define AckmanMenuRelaunch RecompMenuRelaunch
+#define AckmanMenuRendererShutdown RecompMenuRendererShutdown
+#define AckmanMenuRomDirectory RecompMenuRomDirectory
+#define AckmanMenuRunAheadMax RecompMenuRunAheadMax
+#define AckmanMenuSaveDirectory RecompMenuSaveDirectory
+#define AckmanMenuSelectShader RecompMenuSelectShader
+#define AckmanMenuSetAudio RecompMenuSetAudio
+#define AckmanMenuSetBootObserver RecompMenuSetBootObserver
+#define AckmanMenuSetDisplayAspect RecompMenuSetDisplayAspect
+#define AckmanMenuSetFullscreen RecompMenuSetFullscreen
+#define AckmanMenuSetInternalScale RecompMenuSetInternalScale
+#define AckmanMenuSetOutputMethod RecompMenuSetOutputMethod
+#define AckmanMenuSetRewindInterval RecompMenuSetRewindInterval
+#define AckmanMenuSetRunAhead RecompMenuSetRunAhead
+#define AckmanMenuSetSampleRate RecompMenuSetSampleRate
+#define AckmanMenuSetShaders RecompMenuSetShaders
+#define AckmanMenuSetVSync RecompMenuSetVSync
+#define AckmanMenuSetVolume RecompMenuSetVolume
+#define AckmanMenuSetWidescreen RecompMenuSetWidescreen
+#define AckmanMenuSetWindowSize RecompMenuSetWindowSize
+#define AckmanMenuShaderCount RecompMenuShaderCount
+#define AckmanMenuShaderDirectory RecompMenuShaderDirectory
+#define AckmanMenuShaderFailure RecompMenuShaderFailure
+#define AckmanMenuShaderName RecompMenuShaderName
+#define AckmanMenuShadersRefresh RecompMenuShadersRefresh
+#define AckmanMenuShortcut RecompMenuShortcut
+#define AckmanMenuShutdown RecompMenuShutdown
+#define AckmanMenuSync RecompMenuSync
+#define AckmanMenuTakeSettings RecompMenuTakeSettings
+#define AckmanMenuUiClearBinding RecompMenuUiClearBinding
+#define AckmanMenuUiEvent RecompMenuUiEvent
+#define AckmanMenuUiGamepadsChanged RecompMenuUiGamepadsChanged
+#define AckmanMenuUiInit RecompMenuUiInit
+#define AckmanMenuUiMouseWakeOnly RecompMenuUiMouseWakeOnly
+#define AckmanMenuUiShutdown RecompMenuUiShutdown
+#define AckmanMenuUiSuppressInput RecompMenuUiSuppressInput
+#define AckmanMenuUiSync RecompMenuUiSync
+#define AckmanMenuUiToggle RecompMenuUiToggle
+#define AckmanMenuVisible RecompMenuVisible
+#define AckmanMenuWindowMultiplier RecompMenuWindowMultiplier
+#define AckmanModMetadata RecompModMetadata
+#define AckmanResolveRom RecompMenuResolveRom
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+bool AckmanMenuRegister(void);
+#ifdef __cplusplus
+}
+#endif

@@ -1,0 +1,26 @@
+# ROM identity for Go Go Ackman — the single source of truth.
+#
+# Read by three consumers, so a revision change is made once, here:
+#   - the build   (CMake generates snesrecomp_rom_identity.h from this file)
+#   - tools/regen.sh
+#   - .github/workflows/release.yml
+#
+# Format is `key = value`, one per line; `#` starts a comment. Values may be
+# quoted. Leaving a digest empty means the build cannot verify a ROM it is
+# handed — it will say so rather than accept it.
+
+display_name    = Go Go Ackman
+rom_file        = Go Go Ackman (Japan).sfc
+# Every digest of the bare image (copier header stripped), so the Retro
+# catalog can take a submission's identity from this file rather than ask
+# the submitter to hash the ROM again. The build verifies on crc32/sha256.
+expected_crc32  = 26fb2d11
+expected_md5    = 698ec39014f45d1ecea6ecc7d5223664
+expected_sha1   = ad0c13270e27191af69cb30f5710159422e8e836
+expected_sha256 = e8a33b6c8e15cf0aa60e9694471a51926fb97ad895d4714384c6abff28a33a1f
+rom_size        = 1310720
+mapping         = lorom
+region          = JPN
+# What a mod package's [[target]] game_id must name to apply to this title
+# (snesrecomp/docs/MOD_PACKAGES.md). Stable across revisions on purpose.
+game_id         = go-go-ackman-jp

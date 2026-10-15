@@ -1,0 +1,80 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -774,7 +774,13 @@
+   SDL_Event e={0};e.type=SDL_EVENT_WINDOW_FOCUS_GAINED;e.window.windowID=(Uint32)(uintptr_t)userdata;
+   SDL_PushEvent(&e);return 0;
+ }
++static Uint32 SDLCALL ScriptCloseMenu(void *context,SDL_TimerID id,Uint32 interval) {
++  (void)context;(void)id;(void)interval;
++  SDL_Event event={0};event.type=SDL_EVENT_KEY_DOWN;event.key.key=SDLK_ESCAPE;
++  SDL_PushEvent(&event);event.type=SDL_EVENT_KEY_UP;SDL_PushEvent(&event);return 0;
++}
+ static void ScriptHostOption(const char *name,int value) {
++  if(!strcmp(name,"MenuCloseAfter") && value>0) {SDL_AddTimer((Uint32)value,ScriptCloseMenu,NULL);return;}
+   if(!strcmp(name,"RunAhead"))AckmanMenuSetRunAhead(value);
+   else if(!strcmp(name,"RewindInterval"))AckmanMenuSetRewindInterval(value);
+   else if(!strcmp(name,"Fullscreen"))AckmanMenuSetFullscreen(value!=0);
+@@ -2039,25 +2045,7 @@
+     if(!g_config.fullscreen && g_config.window_width>0 && g_config.window_height>0)
+       SDL_SetWindowSize(g_window,g_config.window_width,g_config.window_height);
+   }
+-  if(changes&ACK_SETTINGS_OUTPUT) {
+-    int old=g_ackman_output_method;
+-    SdlRenderer_Destroy();
+-    if(!SdlRenderer_Init(g_window)) {
+-      fprintf(stderr,"[menu] Output change failed; restoring previous driver\n");
+-      g_config.output_method=(uint8)old;
+-      if(!SdlRenderer_Init(g_window))Die("Unable to restore renderer");
+-    }
+-    if(g_ackman_last_w && g_ackman_last_pixels) {
+-      uint8 *pixels=NULL;int pitch=0;
+-      SdlRenderer_BeginDraw(g_ackman_last_w,g_ackman_last_h,&pixels,&pitch);
+-      if(pixels) {
+-        for(int y=0;y<g_ackman_last_h;y++)memcpy(pixels+(size_t)y*pitch,
+-            g_ackman_last_pixels+(size_t)y*g_ackman_last_w*4,g_ackman_last_w*4);
+-        SDL_UnlockTexture(g_texture);g_ackman_locked_pixels=NULL;
+-      }
+-    }
+-    fprintf(stderr,"[menu] OutputMethod=%d driver=%s\n",g_config.output_method,SDL_GetRendererName(g_renderer));
+-  }
++  /* Driver lifetime ends only with the process. No live recreate branch. */
+   if((changes&ACK_SETTINGS_VSYNC) || g_ackman_vsync!=g_config.vsync) {
+     if(!SDL_SetRenderVSync(g_renderer,g_config.vsync && !PresentationDecoupled() && !g_config.disable_frame_delay?1:0))
+       fprintf(stderr,"[menu] VSync unsupported by this driver: %s\n",SDL_GetError());
+@@ -2972,7 +2960,7 @@
+     }
+   }
+ 
+-  if(AckmanBootResume()) { bool saved=g_config.autosave;g_config.autosave=true;AckmanAutosave(false);g_config.autosave=saved; }
++  if(AckmanBootResume())AckmanBootResumed(AckmanAutosaveForced(false));
+   else AckmanAutosave(false);
+ 
+   if (script_file)
+@@ -3094,7 +3082,7 @@
+       fprintf(stderr,"[dialog-pause] active=%d frame=%u ticks=%llu\n",dialog_active,frameCtr,(unsigned long long)SDL_GetTicks());
+       previous_dialog=dialog_active;
+     }
+-    bool wrapper_paused=AckmanMenuVisible() || inactive || dialog_active;
++    bool wrapper_paused=AckmanMenuVisible() || AckmanMenuColdBootPending() || inactive || dialog_active;
+     if(g_rewind_audio_locked && (!g_rewind_hotkey || wrapper_paused || !snes_rewind_is_open())) {
+       snes_rewind_commit();AckmanHostStateLoadEnd();g_rewind_audio_locked=false;
+       g_state_generation=RtlStateGeneration();
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -19,7 +19,7 @@
+   kKeyMod_Gui = 0x2000,
+ };
+ 
+-Config g_config;
++Config g_config = {.output_method=kOutputMethod_OpenGL};
+ static bool s_widescreen_seen;
+ static bool s_internal_resolution_seen;
+ /* Set when a [KeyMap] line carried a binding this framework used to GENERATE
+@@ -588,6 +588,7 @@
+ void ParseConfigFile(const char *filename) {
+   free(g_config.memory_buffer);
+   memset(&g_config, 0, sizeof(g_config));
++  g_config.output_method=kOutputMethod_OpenGL;
+   memset(keymap_hash_first, 0, sizeof(keymap_hash_first));
+   free(keymap_hash); keymap_hash = NULL; keymap_hash_size = 0;
+   memset(has_keynameid, 0, sizeof(has_keynameid));

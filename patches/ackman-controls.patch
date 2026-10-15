@@ -1,0 +1,128 @@
+--- a/runner/src/keybinds.c
++++ b/runner/src/keybinds.c
+@@ -1,7 +1,9 @@
+ /*
+  * keybinds.c — SNES controller keybinds, INI-driven.
+  *
+- * Bindings live in config.ini [Keybinds.Player1/Player2].
++ * Keyboard bindings live in [Keyboard.Keybinds.Player1]; legacy player
++ * sections remain readable, including Player2 for mods. Controller bindings
++ * are owned separately by ackman_controls.c.
+  * Edit and restart to apply; system commands are separate in [KeyMap].
+  */
+ #include "keybinds.h"
+@@ -69,6 +71,7 @@
+     }, \
+ }
+ 
++static bool s_legacy_p1, s_canonical_p1, s_explicit_p2;
+ static KeyBinds s_binds = KEYBINDS_DEFAULTS;
+ static const KeyBinds s_default_binds = KEYBINDS_DEFAULTS;
+ 
+@@ -127,10 +130,18 @@
+ /* ── File I/O ─────────────────────────────────────────────────────────────── */
+ 
+ static void read_binding(void *context, const char *section, const char *key, const char *value) {
+-    (void)context;
++    int pass=*(int *)context;
+     PlayerBinds *current = NULL;
+-    if (!SDL_strcasecmp(section, "Keybinds.Player1")) current = &s_binds.p1;
+-    if (!SDL_strcasecmp(section, "Keybinds.Player2")) current = &s_binds.p2;
++    if (!SDL_strcasecmp(section, "Keybinds.Player1")) {
++        s_legacy_p1=true;if(pass==0)current=&s_binds.p1;
++    }
++    if (!SDL_strcasecmp(section, "Keyboard.Keybinds.Player1")) {
++        s_canonical_p1=true;if(pass==1)current=&s_binds.p1;
++    }
++    if (!SDL_strcasecmp(section, "Keybinds.Player2") ||
++        !SDL_strcasecmp(section, "Keyboard.Keybinds.Player2")) {
++        s_explicit_p2=true;if(pass==1)current=&s_binds.p2;
++    }
+     if (!current) return;
+     for (const ButtonDef *bd = s_buttons; bd->name; ++bd) {
+         if (!SDL_strcasecmp(key, bd->name)) {
+@@ -145,7 +156,15 @@
+ void keybinds_init(const char *exe_path) {
+     (void)exe_path;
+     s_binds = s_default_binds;
+-    AckmanIniRead(AckmanConfigPath(), read_binding, NULL);
++    s_legacy_p1=s_canonical_p1=s_explicit_p2=false;
++    for(int pass=0;pass<2;pass++)AckmanIniRead(AckmanConfigPath(),read_binding,&pass);
++    if(s_legacy_p1) {
++        AckmanIniValue values[12];
++        for(int b=0;b<12;b++)values[b]=(AckmanIniValue){"Keyboard.Keybinds.Player1",
++            s_buttons[b].name,scancode_to_name(keybinds_get_button(1,b))};
++        const char *remove[]={"Keybinds.Player1"};
++        AckmanConfigUpdateRemoving(values,12,remove,1);
++    }
+ }
+ 
+ const KeyBinds *keybinds_get(void) {
+@@ -183,12 +202,12 @@
+ 
+ void keybinds_save(void) {
+     AckmanIniValue values[24];
+-    for (int p = 1; p <= 2; ++p) for (int b = 0; b < 12; ++b) {
++    for (int p = 1; p <= (s_explicit_p2?2:1); ++p) for (int b = 0; b < 12; ++b) {
+         int i = (p-1)*12+b;
+-        values[i] = (AckmanIniValue){p == 1 ? "Keybinds.Player1" : "Keybinds.Player2",
++        values[i] = (AckmanIniValue){p == 1 ? "Keyboard.Keybinds.Player1" : "Keybinds.Player2",
+             s_buttons[b].name, scancode_to_name(keybinds_get_button(p,b))};
+     }
+-    if (!AckmanConfigUpdate(values, 24))
++    if (!AckmanConfigUpdate(values, s_explicit_p2?24:12))
+         fprintf(stderr, "[config] Unable to save controller bindings: %s\n", SDL_GetError());
+ }
+ 
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -67,6 +67,7 @@
+ #include "launcher_cache.h"
+ #include "host_paths.h"
+ #include "keybinds.h"
++#include "ackman_controls.h"
+ #include "host_report.h"
+ #include "post_mortem.h"
+ #include "widescreen.h"
+@@ -1211,7 +1212,8 @@
+ /* Seat-0 input word the overlays navigate with — the same sources the guest
+  * gets, minus the script (an overlay is a human facility). */
+ static uint32 OverlayNavInputs(void) {
+-  return g_input_state | g_pad_buttons | g_gamepad[0].axis_buttons;
++  return g_input_state | (g_pad_buttons & 0xfff000) |
++      AckmanControlsReadGamepad(g_gamepad[0].joystick_id);
+ }
+ 
+ /* Controller and joystick events, in ONE place, because the overlays' modal
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -278,7 +278,9 @@
+ }
+ 
+ static int GetIniSection(const char *s) {
+-  if (StringEqualsNoCase(s, "[Keybinds.Player1]")) return 10;
++  if (StringEqualsNoCase(s, "[Keybinds.Player1]") ||
++      StringEqualsNoCase(s, "[Keyboard.Keybinds.Player1]") ||
++      StringEqualsNoCase(s, "[Controller.Keybinds.Player1]")) return 10;
+   if (StringEqualsNoCase(s, "[Keybinds.Player2]")) return 11;
+   if (StringEqualsNoCase(s, "[KeyMap]"))
+     return 0;
+@@ -669,12 +671,12 @@
+   TEXT("Graphics", "Shader", g_config.shader ? g_config.shader : "");
+   static const char *const aspects[] = {"4:3", "8:7", "1:1"};
+   TEXT("Graphics", "DisplayAspect", aspects[SnesDisplayAspect_Clamp(g_config.display_aspect)]);
+-  NUMBER("Keybinds.Player1", "Source", g_config.player_src[0]);
+-  NUMBER("Keybinds.Player2", "Source", g_config.player_src[1]);
+-  NUMBER("Keybinds.Player1", "EnableGamepad", g_config.enable_gamepad[0]);
+-  NUMBER("Keybinds.Player2", "EnableGamepad", g_config.enable_gamepad[1]);
+-  NUMBER("Keybinds.Player1", "GamepadDeadzone", g_config.gamepad_deadzone);
+-  NUMBER("Keybinds.Player2", "GamepadDeadzone", g_config.gamepad_deadzone);
++  NUMBER("Keyboard.Keybinds.Player1", "Source", g_config.player_src[0]);
++  if(g_config.player_src[1]!=0)NUMBER("Keybinds.Player2", "Source", g_config.player_src[1]);
++  NUMBER("Controller.Keybinds.Player1", "EnableGamepad", g_config.enable_gamepad[0]);
++  if(g_config.player_src[1]!=0)NUMBER("Keybinds.Player2", "EnableGamepad", g_config.enable_gamepad[1]);
++  NUMBER("Controller.Keybinds.Player1", "GamepadDeadzone", g_config.gamepad_deadzone);
++  if(g_config.player_src[1]!=0)NUMBER("Keybinds.Player2", "GamepadDeadzone", g_config.gamepad_deadzone);
+ #undef TEXT
+ #undef NUMBER
+   if (!AckmanConfigUpdate(values, count))

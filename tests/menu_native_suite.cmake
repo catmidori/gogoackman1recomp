@@ -1,0 +1,8 @@
+execute_process(COMMAND "${MENU}" native RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "Native menu failed: ${result}")
+endif()
+execute_process(COMMAND "${PRESENTATION}" RESULT_VARIABLE result)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "Native GLSL/capture failed: ${result}")
+endif()

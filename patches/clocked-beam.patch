@@ -1,0 +1,17 @@
+diff --git a/runner/src/snes/snes.c b/runner/src/snes/snes.c
+index 3ef0d83..a08349c 100644
+--- a/runner/src/snes/snes.c
++++ b/runner/src/snes/snes.c
+@@ -612,8 +612,12 @@ uint8_t snes_readReg(Snes* snes, uint16_t adr) {
+        * polling tick as well doubles time in $4212 wait loops (SMRPG's boot
+        * fades completed in half the reference frame count). */
+       extern int g_interp_apu_driving;
++      /* Hosts with an absolute CPU/beam timeline must not add synthetic
++       * clocks on an AOT register read. */
++#ifndef SNESRECOMP_CLOCKED_BEAM
+       if (!g_interp_apu_driving)
+         snes_advance_beam(snes, 64, false);
++#endif
+       // Bit 7 = vblank. The real frame loop drives vblank via inNmi, not
+       // inVblank (inVblank is never set true), so on the static-recomp
+       // path bit 7 must be SYNTHESIZED the same way bit 6 is — otherwise a

@@ -1,0 +1,23 @@
+#pragma once
+#include "recomp_menu_controls.h"
+#include "ackman_conflict.h"
+#define AckmanConflict RecompConflict
+#define AckmanControlsActive RecompControlsActive
+#define AckmanControlsBegin RecompControlsBegin
+#define AckmanControlsBeginSingle RecompControlsBeginSingle
+#define AckmanControlsCancel RecompControlsCancel
+#define AckmanControlsCapturing RecompControlsCapturing
+#define AckmanControlsClear RecompControlsClear
+#define AckmanControlsConflict RecompControlsConflict
+#define AckmanControlsConflicts RecompControlsConflicts
+#define AckmanControlsEvent RecompControlsEvent
+#define AckmanControlsInit RecompControlsInit
+#define AckmanControlsInputBlocked RecompControlsInputBlocked
+#define AckmanControlsLabel RecompControlsLabel
+#define AckmanControlsName RecompControlsName
+#define AckmanControlsPrompt RecompControlsPrompt
+#define AckmanControlsRaw RecompControlsRaw
+#define AckmanControlsReadDevices RecompControlsReadDevices
+#define AckmanControlsReadGamepad RecompControlsReadGamepad
+#define AckmanControlsWizard RecompControlsWizard
+#define AckmanGamepadLabel RecompGamepadLabel

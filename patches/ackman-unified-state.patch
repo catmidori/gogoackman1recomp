@@ -1,0 +1,44 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -809,8 +809,8 @@
+ static Uint32 SDLCALL ScriptReleaseHold(void *unused,SDL_TimerID timer,Uint32 interval) {
+   (void)unused;(void)timer;(void)interval;SDL_PushEvent(&script_hold_release);return 0;
+ }
+-static uint32 TickScript(void) {
+-  ApplyScriptForcePokes();
++static uint32 TickScriptImpl(bool host_only) {
++  if(!host_only)ApplyScriptForcePokes();
+ 
+   if (!g_script_entries || g_script_index >= g_script_count)
+     return 0;
+@@ -882,6 +882,8 @@
+   return 0;
+ }
+ 
++static uint32 TickScript(void) { return TickScriptImpl(false); }
++
+ void NORETURN Die(const char *error) {
+   /* Record the message before exiting: the atexit post-mortem dump
+    * includes it and preserves a timestamped crash copy (see
+@@ -892,6 +894,13 @@
+   exit(1);
+ }
+ 
++/* Diagnostic scripts may edit host widgets while the menu freezes guest time.
++ * Never consume waits, controller input, RAM pokes or savestate actions here. */
++static bool ScriptImmediateHostAction(void) {
++  if(!g_script_entries || g_script_index>=g_script_count)return false;
++  ScriptEntry *e=&g_script_entries[g_script_index];
++  return (e->host_option[0] || e->host_key) && (g_script_phase==0 || g_script_counter==0);
++}
+ static GamepadInfo *GetGamepadInfo(SDL_JoystickID id) {
+   return (g_gamepad[0].joystick_id == id) ? &g_gamepad[0] :
+     (g_gamepad[1].joystick_id == id) ? &g_gamepad[1] : NULL;
+@@ -3098,6 +3107,7 @@
+     }
+ 
+     if (wrapper_paused) {
++      if(AckmanMenuVisible() && ScriptImmediateHostAction())TickScriptImpl(true);
+       if(g_renderer) {
+         int dw,dh;SdlRenderer_GetOutputSize(&dw,&dh);
+         SnesDisplayViewport viewport;

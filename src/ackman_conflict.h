@@ -1,0 +1,9 @@
+#pragma once
+#include "recomp_menu_types.h"
+typedef RecompConflict AckmanConflict;
+typedef RecompConflictOrigin AckmanConflictOrigin;
+#define ACK_CONFLICT_HOTKEY RECOMP_CONFLICT_HOTKEY
+#define ACK_CONFLICT_KEYBOARD RECOMP_CONFLICT_KEYBOARD
+#define ACK_CONFLICT_GAMEPAD RECOMP_CONFLICT_GAMEPAD
+#define ACK_CONFLICT_MAX RECOMP_CONFLICT_MAX
+#define AckmanConflictAppend RecompConflictAppend

@@ -1,0 +1,6 @@
+foreach(program "${VIDEO}" "${REWIND}")
+  execute_process(COMMAND "${program}" RESULT_VARIABLE status)
+  if(NOT status EQUAL 0)
+    message(FATAL_ERROR "Video/rewind regression failed: ${program} (${status})")
+  endif()
+endforeach()

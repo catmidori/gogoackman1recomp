@@ -1,0 +1,30 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -3028,9 +3028,25 @@
+     }
+ 
+     ProfileEnd(kProfileEvents, event_profile_start);
+-    if (g_paused != audiopaused) {
+-      audiopaused = g_paused;
++    bool pause_audio = g_paused || AckmanMenuVisible();
++    if (pause_audio != audiopaused) {
++      audiopaused = pause_audio;
+       SetAudioPaused(audiopaused);
++    }
++
++    if (AckmanMenuVisible()) {
++      if(g_renderer) {
++        int dw,dh;SdlRenderer_GetOutputSize(&dw,&dh);
++        SnesDisplayViewport viewport;
++        if(g_game->compute_viewport) {
++          g_game->compute_viewport(g_sdl_renderer_rect.w,g_sdl_renderer_rect.h,dw,dh,&viewport);
++          g_sdl_present_rect=(SDL_Rect){viewport.x,viewport.y,viewport.width,viewport.height};
++        }
++        SdlRenderer_Present();
++      }
++      snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
++      SDL_Delay(16);
++      continue;
+     }
+ 
+     if (g_paused && !g_savestate_menu_hotkey && !g_rewind_hotkey) {

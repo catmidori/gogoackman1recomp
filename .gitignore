@@ -1,0 +1,35 @@
+# Build and compilation outputs
+build/
+build-*/
+dist/
+.flatpak-builder/
+bin/
+obj/
+out/
+releases/
+.tools/
+
+# Compilations and binaries
+*.exe
+*.elf
+*.flatpak
+*.dll
+*.so
+*.dylib
+*.dmg
+*.app/
+
+# Local configuration and saves (User specific)
+config.ini
+*.sav
+saves/GGA1_autosave.sav
+
+# Crash dumps, logs and private AI cache
+private/
+crash_report*.json
+crash_minidump*.dmp
+*.log
+.cache/
+.vs/
+.vscode/
+.idea/

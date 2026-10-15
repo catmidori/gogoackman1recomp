@@ -1,0 +1,16 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -3177,2 +3177,5 @@
+ 
++    bool ackman_owns_input = AckmanMenuOwnsInput();
++    if(ackman_owns_input) g_input_state = 0;
++
+     /* Seat 0's HUMAN word, kept separate from the script's and the debug
+@@ -3209,5 +3212,5 @@
+ 
+-    uint32 human = OverlayFilterGuestInput(
++    uint32 human = ackman_owns_input ? 0 : OverlayFilterGuestInput(
+         snes_savestate_menu_filter_guest_input(OverlayNavInputs()));
+-    uint32 inputs = human | (g_gamepad[1].axis_buttons << 12);
++    uint32 inputs = ackman_owns_input ? 0 : human | (g_gamepad[1].axis_buttons << 12);
+ 

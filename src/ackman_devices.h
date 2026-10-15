@@ -1,0 +1,11 @@
+#pragma once
+#include "recomp_menu_devices.h"
+#define AckmanDeviceInfo RecompDeviceInfo
+#define AckmanDevicesEvent RecompDevicesEvent
+#define AckmanDevicesGamepads RecompDevicesGamepads
+#define AckmanDevicesInit RecompDevicesInit
+#define AckmanDevicesJoysticks RecompDevicesJoysticks
+#define AckmanDevicesReady RecompDevicesReady
+#define AckmanDevicesRemove RecompDevicesRemove
+#define AckmanDevicesRequest RecompDevicesRequest
+#define AckmanDevicesShutdown RecompDevicesShutdown

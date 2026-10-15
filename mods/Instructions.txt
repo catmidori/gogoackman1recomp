@@ -1,0 +1,1 @@
+Drop .snesmod or .msu files here. The game can also read files put inside folders.

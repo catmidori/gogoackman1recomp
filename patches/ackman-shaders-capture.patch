@@ -1,0 +1,308 @@
+diff --git a/runner/src/desktop/config.h b/runner/src/desktop/config.h
+--- a/runner/src/desktop/config.h
++++ b/runner/src/desktop/config.h
+@@ -128,6 +128,8 @@
+ 
+   char *memory_buffer;
+   const char *shader;
++  bool enable_shaders,integer_scaling;
++  char selected_shader[256];
+ 
+   bool enable_gamepad[2];
+   /* Which input device drives each player, from config.ini [Controller]
+diff --git a/runner/src/desktop/mmx_config.c b/runner/src/desktop/mmx_config.c
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -500,6 +500,12 @@
+       return ParseBool(value, &g_config.no_sprite_limits);
+     } else if (StringEqualsNoCase(key, "Widescreen")) {
+       return ParseBool(value, &g_config.widescreen);
++    } else if (StringEqualsNoCase(key, "EnableShaders")) {
++      return ParseBool(value,&g_config.enable_shaders);
++    } else if (StringEqualsNoCase(key, "IntegerScaling")) {
++      return ParseBool(value,&g_config.integer_scaling);
++    } else if (StringEqualsNoCase(key, "SelectedShader")) {
++      SDL_strlcpy(g_config.selected_shader,value,sizeof(g_config.selected_shader));return true;
+     } else if (StringEqualsNoCase(key, "Shader")) {
+       g_config.shader = *value ? value : NULL;
+       return true;
+@@ -720,7 +726,9 @@
+   NUMBER("Graphics", "FrameBlend", g_config.frame_blend);
+   NUMBER("Graphics", "Widescreen", g_config.widescreen);
+   TEXT("Graphics", "Renderer", g_config.renderer[0] ? g_config.renderer : "auto");
+-  TEXT("Graphics", "Shader", g_config.shader ? g_config.shader : "");
++  NUMBER("Graphics", "IntegerScaling", g_config.integer_scaling);
++  NUMBER("Graphics", "EnableShaders", g_config.enable_shaders);
++  TEXT("Graphics", "SelectedShader", g_config.selected_shader);
+   static const char *const aspects[] = {"4:3", "8:7", "1:1"};
+   TEXT("Graphics", "DisplayAspect", aspects[SnesDisplayAspect_Clamp(g_config.display_aspect)]);
+   NUMBER("Keyboard.Keybinds.Player1", "Source", g_config.player_src[0]);
+diff --git a/runner/src/desktop/host_main.c b/runner/src/desktop/host_main.c
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -1,10 +1,12 @@
+ #include "ackman_menu.h"
+ #include "ackman_devices.h"
++#include "ackman_shader.h"
++#include "ackman_capture.h"
+ #include "ackman_rumble.h"
+ #include "ackman_debug.h"
+ #include "ackman_flow.h"
+ /*
+- * host_main.c — the framework's desktop host. See host_main.h.
++ * host_main.c â€” the framework's desktop host. See host_main.h.
+  *
+  * Ported from SuperMetroidRecomp/src/main.c, which was the most complete host
+  * in the ecosystem at the time (in-game overlays with a frozen-frame present,
+@@ -120,7 +122,7 @@
+ #endif
+ #endif
+ 
+-/* ─────────────────────────────────────────────────────────────────────────── */
++/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+ 
+ static const SnesDesktopHostGame *g_game;
+ static char g_window_title[128];
+@@ -164,7 +166,7 @@
+ #include "opengl.h"   /* snesrecomp_opengl_set_vsync */
+ #endif
+ 
+-/* ── Symbols the framework leaves to the host ─────────────────────────────── */
++/* â”€â”€ Symbols the framework leaves to the host â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+ 
+ bool g_new_ppu = true;
+ 
+@@ -787,6 +789,9 @@
+   else if(!strcmp(name,"PauseWhenInactive"))g_config.pause_when_inactive=value!=0;
+   else if(!strcmp(name,"ControllerVibration")){g_config.controller_vibration=value!=0;AckmanRumbleSetEnabled(g_config.controller_vibration);}
+   else if(!strcmp(name,"NoSpriteLimits"))g_config.no_sprite_limits=value!=0;
++  else if(!strcmp(name,"IntegerScaling"))g_config.integer_scaling=value!=0;
++  else if(!strcmp(name,"EnableShaders"))g_config.enable_shaders=value!=0;
++  else if(!strcmp(name,"Shader"))AckmanMenuSelectShader(value);
+   else if(!strcmp(name,"Mod")) { AckmanMenuModSelect(value);AckmanMenuModTransfer(); }
+   else if(!strcmp(name,"Reboot"))AckmanMenuCommand(ACK_MENU_RESET);
+   else { fprintf(stderr,"script: unknown host option %s\n",name);return; }
+@@ -807,7 +812,7 @@
+   if (g_script_phase == 1) {
+     // waiting
+     if (g_script_counter > 0) { g_script_counter--; return 0; }
+-    // done waiting — start hold
++    // done waiting â€” start hold
+     g_script_phase = 0;
+     g_script_counter = e->hold_frames;
+   }
+@@ -857,7 +862,7 @@
+       }
+       return e->mask;
+     }
+-    // hold done — advance
++    // hold done â€” advance
+     g_script_index++;
+     if (g_script_index < g_script_count) {
+       e = &g_script_entries[g_script_index];
+@@ -1250,7 +1255,7 @@
+   ProfileEnd(kProfilePresent, profile_start);
+ }
+ 
+-/* Seat-0 input word the overlays navigate with — the same sources the guest
++/* Seat-0 input word the overlays navigate with â€” the same sources the guest
+  * gets, minus the script (an overlay is a human facility). */
+ static uint32 OverlayNavInputs(void) {
+   return g_input_state | (g_pad_buttons & 0xfff000) |
+@@ -1820,7 +1825,7 @@
+   snesrecomp_desktop_request_clock_reset();
+ }
+ 
+-/* ── SDL_Renderer presenter ───────────────────────────────────────────────── */
++/* â”€â”€ SDL_Renderer presenter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+ 
+ static SDL_Renderer *g_renderer;
+ static SDL_Texture *g_texture,*g_internal_texture;
+@@ -1837,8 +1842,7 @@
+ 
+ static bool SdlRenderer_Init(SDL_Window *window) {
+   (void)window;
+-  if (g_config.shader)
+-    fprintf(stderr, "Warning: Shaders are supported only with the OpenGL backend\n");
++
+ 
+   /* SDL3 dropped the renderer flags argument (software vs accelerated is
+    * chosen by driver name, vsync is set separately) and removed
+@@ -1878,6 +1882,7 @@
+ }
+ 
+ static void SdlRenderer_Destroy(void) {
++  AckmanShaderShutdown();
+   AckmanMenuRendererShutdown();
+   SDL_DestroyTexture(g_texture);SDL_DestroyTexture(g_internal_texture);g_internal_texture=NULL;
+   SDL_DestroyRenderer(g_renderer);g_texture=NULL;g_renderer=NULL;
+@@ -1956,9 +1961,11 @@
+   SDL_RenderClear(g_renderer);
+   AckmanMenuDraw(g_renderer,false);
+   /* SDL3's SDL_RenderTexture takes SDL_FRect, not SDL_Rect. */
+-  snesrecomp_sdl_render_texture(g_renderer, image, &source,
++  if(!AckmanShaderDraw(g_renderer,g_ackman_last_pixels,g_ackman_last_w,g_ackman_last_h,&g_sdl_present_rect))
++    snesrecomp_sdl_render_texture(g_renderer, image, &source,
+                                 &g_sdl_present_rect);
+   AckmanMenuDraw(g_renderer,true);
++  AckmanCapturePresent(g_renderer);
+   SDL_RenderPresent(g_renderer);
+ }
+ 
+@@ -2063,7 +2070,7 @@
+ #endif
+ }
+ 
+-/* ── Crash pipeline ───────────────────────────────────────────────────────── */
++/* â”€â”€ Crash pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+ 
+ static void dump_cpu_state(void) {
+   fprintf(stderr, "  CpuState: A=%04X X=%04X Y=%04X S=%04X D=%04X DB=%02X PB=%02X "
+@@ -2078,8 +2085,8 @@
+           sig, g_last_recomp_func ? g_last_recomp_func : "(unknown)");
+   dump_cpu_state();
+   RecompStackDump();
+-  cpu_trace_dump_dbpb("CRASH — DB/PB mutations");
+-  cpu_trace_dump_recent("CRASH — main trace ring", 256);
++  cpu_trace_dump_dbpb("CRASH â€” DB/PB mutations");
++  cpu_trace_dump_recent("CRASH â€” main trace ring", 256);
+   fflush(stderr);
+   recomp_post_mortem_dump("signal", NULL);
+   _exit(128 + sig);
+@@ -2102,8 +2109,8 @@
+   }
+   dump_cpu_state();
+   RecompStackDump();
+-  cpu_trace_dump_dbpb("SEH CRASH — DB/PB mutations");
+-  cpu_trace_dump_recent("SEH CRASH — main trace ring", 256);
++  cpu_trace_dump_dbpb("SEH CRASH â€” DB/PB mutations");
++  cpu_trace_dump_recent("SEH CRASH â€” main trace ring", 256);
+   fflush(stderr);
+   recomp_post_mortem_dump("seh", info);
+   return EXCEPTION_EXECUTE_HANDLER;
+@@ -2114,7 +2121,7 @@
+   recomp_post_mortem_dump("atexit", NULL);
+ }
+ 
+-/* ── Mods / launcher / netplay glue ───────────────────────────────────────── */
++/* â”€â”€ Mods / launcher / netplay glue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+ 
+ #if SNESRECOMP_ENABLE_MODS
+ static int g_mods_ready;
+@@ -2166,7 +2173,7 @@
+ #endif /* SNES_HAS_LOBBY_CLIENT */
+ 
+ /* The dump this project was generated from, if the player parked a copy next
+- * to the executable or in the working directory. Not a requirement — it is
++ * to the executable or in the working directory. Not a requirement â€” it is
+  * the habit tools/regen.sh documents, and skipping the prompt for someone
+  * who already followed it is the whole point. */
+ static int FindRomBesideExe(char *out, size_t cap) {
+@@ -2191,7 +2198,7 @@
+   return 0;
+ }
+ 
+-/* ── main ─────────────────────────────────────────────────────────────────── */
++/* â”€â”€ main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+ 
+ int snesrecomp_desktop_main(const SnesDesktopHostGame *game, int argc, char **argv) {
+   if (!game || !game->game_info || !game->display_name) {
+@@ -2218,7 +2225,7 @@
+ #ifndef _WIN32
+   /* On Windows, do NOT install a SIGSEGV handler: the CRT's signal shim
+    * intercepts access violations BEFORE SetUnhandledExceptionFilter, so
+-   * crashes would reach crash_handler with no EXCEPTION_POINTERS — no
++   * crashes would reach crash_handler with no EXCEPTION_POINTERS â€” no
+    * exception record in the minidump/report. With SIGSEGV uninstalled,
+    * AVs reach the SEH filter below with full fault context. */
+   signal(SIGSEGV, crash_handler);
+@@ -2249,7 +2256,7 @@
+   cpu_trace_arm_default_watches();
+   setvbuf(stdout, NULL, _IONBF, 0);
+   setvbuf(stderr, NULL, _IONBF, 0);
+-  /* Capture program path before argv shift — used to place config.ini [Keybinds.PlayerN]
++  /* Capture program path before argv shift â€” used to place config.ini [Keybinds.PlayerN]
+    * next to the executable. */
+   const char *program_path = (argc >= 1) ? argv[0] : NULL;
+   argc--, argv++;
+@@ -2535,7 +2542,7 @@
+         gi.netplay = snes_host_lobby_callbacks();
+ #endif
+ #if defined(SNESRECOMP_HOST_HAS_CODEGEN)
+-        /* Wire "Generate & rebuild…". No-ops when the SDK, CMake or the build
++        /* Wire "Generate & rebuildâ€¦". No-ops when the SDK, CMake or the build
+          * tree is absent, which is the normal state of a shipped build. */
+         snesrecomp_codegen_host_autowire(&gi, gi.name);
+ #endif
+@@ -2587,7 +2594,7 @@
+           RendererApply(ls.renderer);   /* sets renderer + output_method */
+           WriteConfigFile(config_file);
+           /* The launcher's Hotkeys editor writes [KeyMap] straight into the
+-           * config file, which was parsed before the launcher ran — re-apply
++           * config file, which was parsed before the launcher ran â€” re-apply
+            * so rebinds work on THIS boot, not the next one. */
+           ConfigReloadKeyMap(config_file);
+ #if defined(SNES_HAS_LOBBY_CLIENT)
+@@ -2676,7 +2683,7 @@
+     if (start_paused) {
+       debug_server_start_paused();
+ #if SNESRECOMP_TRACE
+-      fprintf(stderr, "[main] Started paused — send 'step N' or 'continue' via TCP\n");
++      fprintf(stderr, "[main] Started paused â€” send 'step N' or 'continue' via TCP\n");
+ #endif
+     }
+   }
+@@ -2785,7 +2792,7 @@
+ #endif
+     int nrc = snes_netplay_start(&g_netplay_cfg);
+     if (nrc != 0)
+-      fprintf(stderr, "netplay: snes_netplay_start failed (%d) — continuing offline\n", nrc);
++      fprintf(stderr, "netplay: snes_netplay_start failed (%d) â€” continuing offline\n", nrc);
+     g_netplay_pending = 0;
+   }
+ #endif
+@@ -3018,7 +3025,7 @@
+     }
+     SDL_Event event;
+ 
+-    /* Inert unless SNESRECOMP_CRASH_TEST is set — support drill for the
++    /* Inert unless SNESRECOMP_CRASH_TEST is set â€” support drill for the
+      * whole crash-capture pipeline (minidump + report + crash copy). */
+     host_report_crash_test_tick();
+ 
+@@ -3520,7 +3527,7 @@
+   return 0;
+ }
+ 
+-/* ── Input plumbing ───────────────────────────────────────────────────────── */
++/* â”€â”€ Input plumbing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+ 
+ /* The FPS readout is the framework OSD's (snes_osd.c: grey panel, turbo and
+  * save-slot toasts share it), toggled by [KeyMap] DisplayPerf. The host used
+@@ -3621,16 +3628,7 @@
+     return;
+   s_last_screenshot_time = now;
+ 
+-#ifdef __ANDROID__
+-  fprintf(stderr, "Screenshots require the desktop OpenGL backend.\n");
+-#else
+-  if (g_config.output_method != kOutputMethod_OpenGL) {
+-    fprintf(stderr, "Screenshots require OutputMethod = OpenGL in config.ini "
+-                    "(shaders share the same limitation).\n");
+-    return;
+-  }
+-  OpenGLRenderer_RequestScreenshot();
+-#endif
++  AckmanCaptureRequest();
+ }
+ 
+ static uint32 GetActiveControllers(void) {
+@@ -3768,7 +3766,7 @@
+   }
+ }
+ 
+-/* ── config.ini discovery ─────────────────────────────────────────────────── */
++/* â”€â”€ config.ini discovery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+ 
+ // Go some steps up and find config.ini
+ static void SwitchDirectory(void) {

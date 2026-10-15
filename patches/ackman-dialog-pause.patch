@@ -1,0 +1,39 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -1914,6 +1914,13 @@
+ #endif
+ }
+ 
++static bool g_dialog_audio_dirty;
++void AckmanHostDialogPause(void) {
++  SetAudioPaused(true);
++  g_dialog_audio_dirty=true;
++  snesrecomp_desktop_request_clock_reset();
++}
++
+ /* ── SDL_Renderer presenter ───────────────────────────────────────────────── */
+ 
+ static SDL_Renderer *g_renderer;
+@@ -3116,11 +3123,19 @@
+-    bool pause_audio = g_paused || AckmanMenuVisible() || inactive;
+-    if (pause_audio != audiopaused) {
++    bool dialog_active=AckmanMenuDialogActive();
++    static bool previous_dialog;
++    if(dialog_active!=previous_dialog) {
++      fprintf(stderr,"[dialog-pause] active=%d frame=%u ticks=%llu\n",dialog_active,frameCtr,(unsigned long long)SDL_GetTicks());
++      previous_dialog=dialog_active;
++    }
++    bool wrapper_paused=AckmanMenuVisible() || inactive || dialog_active;
++    bool pause_audio = g_paused || wrapper_paused;
++    if (pause_audio != audiopaused || g_dialog_audio_dirty) {
+       audiopaused = pause_audio;
+       SetAudioPaused(audiopaused);
++      g_dialog_audio_dirty=false;
+       fprintf(stderr,"[audio-pause] paused=%d frame=%u\n",audiopaused,frameCtr);
+     }
+ 
+-    if (AckmanMenuVisible() || inactive) {
++    if (wrapper_paused) {
+       if(g_renderer) {
+         int dw,dh;SdlRenderer_GetOutputSize(&dw,&dh);
+         SnesDisplayViewport viewport;

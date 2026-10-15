@@ -1,0 +1,128 @@
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -47,8 +47,28 @@
+   M(Load), M(Save),
+   S(Fullscreen), S(Reset),
+   S(Pause), S(PauseDimmed), S(Turbo), S(WindowBigger), S(WindowSmaller), S(VolumeUp), S(VolumeDown), S(DisplayPerf), S(ToggleRenderer), S(ToggleWidescreen),
+-  S(SaveStateMenu), S(Rewind), S(Screenshot), S(Mute),
++  S(Rewind), S(Screenshot), S(Mute),
+   /* Public Ackman names; original runner spellings remain compatible aliases. */
++  {"SaveSlot1", kKeys_Save + 0, 1},
++  {"SaveSlot2", kKeys_Save + 1, 1},
++  {"SaveSlot3", kKeys_Save + 2, 1},
++  {"SaveSlot4", kKeys_Save + 3, 1},
++  {"SaveSlot5", kKeys_Save + 4, 1},
++  {"SaveSlot6", kKeys_Save + 5, 1},
++  {"SaveSlot7", kKeys_Save + 6, 1},
++  {"SaveSlot8", kKeys_Save + 7, 1},
++  {"SaveSlot9", kKeys_Save + 8, 1},
++  {"SaveSlot10", kKeys_Save + 9, 1},
++  {"LoadSlot1", kKeys_Load + 0, 1},
++  {"LoadSlot2", kKeys_Load + 1, 1},
++  {"LoadSlot3", kKeys_Load + 2, 1},
++  {"LoadSlot4", kKeys_Load + 3, 1},
++  {"LoadSlot5", kKeys_Load + 4, 1},
++  {"LoadSlot6", kKeys_Load + 5, 1},
++  {"LoadSlot7", kKeys_Load + 6, 1},
++  {"LoadSlot8", kKeys_Load + 7, 1},
++  {"LoadSlot9", kKeys_Load + 8, 1},
++  {"LoadSlot10", kKeys_Load + 9, 1},
+   {"ToggleFPS", kKeys_DisplayPerf, 1},
+   {"ScaleUp", kKeys_WindowBigger, 1},
+   {"ScaleDown", kKeys_WindowSmaller, 1},
+@@ -91,8 +111,8 @@
+     if (ent->key == key) {
+       /* Launcher-editable menu actions take precedence over legacy slot
+        * shortcuts, independently of config line/default registration order. */
+-      bool new_menu = cmd == kKeys_SaveStateMenu || cmd == kKeys_Rewind;
+-      bool old_menu = ent->cmd == kKeys_SaveStateMenu || ent->cmd == kKeys_Rewind;
++      bool new_menu = cmd == kKeys_Rewind;
++      bool old_menu = ent->cmd == kKeys_Rewind;
+       bool new_slot = cmd >= kKeys_Load && cmd <= kKeys_Save_Last;
+       bool old_slot = ent->cmd >= kKeys_Load && ent->cmd <= kKeys_Save_Last;
+       if (new_menu && old_slot) ent->cmd = cmd;
+@@ -133,6 +153,22 @@
+ }
+ 
+ static void ParseKeyArray(char *value, int cmd, int size) {
++  /* A canonical single shortcut may be the literal comma key. */
++  if(size==1 && strchr(value,',')) {
++    SDL_Keymod mods=0;const char *key=value;
++    while(1) {
++      if(!SDL_strncasecmp(key,"Ctrl+",5)){mods|=SDL_KMOD_CTRL;key+=5;}
++      else if(!SDL_strncasecmp(key,"Alt+",4)){mods|=SDL_KMOD_ALT;key+=4;}
++      else if(!SDL_strncasecmp(key,"Shift+",6)){mods|=SDL_KMOD_SHIFT;key+=6;}
++      else if(!SDL_strncasecmp(key,"Gui+",4)){mods|=SDL_KMOD_GUI;key+=4;}
++      else break;
++    }
++    SDL_Keycode code=SDL_GetKeyFromName(key);
++    int packed=(mods&SDL_KMOD_CTRL?kKeyMod_Ctrl:0)|(mods&SDL_KMOD_ALT?kKeyMod_Alt:0)|
++       (mods&SDL_KMOD_SHIFT?kKeyMod_Shift:0)|(mods&SDL_KMOD_GUI?kKeyMod_Gui:0)|REMAP_SDL_KEYCODE(code);
++    if(code!=SDLK_UNKNOWN)KeyMapHash_Add(packed,cmd);
++    return;
++  }
+   char *s;
+   int i = 0;
+   for (; (i < size || size == 1) && (s = NextDelim(&value, ',')) != NULL;
+@@ -334,6 +370,8 @@
+   if (section == 0) {
+     /* Legacy Controls is informational; player sections exclusively own gameplay. */
+     if (StringEqualsNoCase(key, "Controls") || StringEqualsNoCase(key, "ControlsP2")) return true;
++    if (StringEqualsNoCase(key, "SaveStateMenu")) return true; /* obsolete, no listener */
++    if (!SDL_strncasecmp(value,"Gamepad ",8)) return true; /* wrapper owns SDL gamepad hotkeys */
+     for (int i = 0; i < countof(kKeyNameId); i++) {
+       if (StringEqualsNoCase(key, kKeyNameId[i].name)) {
+         has_keynameid[i] = true;
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -2400,7 +2400,7 @@
+   if (HostGetenv("KEYMAP_DUMP")) {
+     static const struct { const char *name; int cmd; } kProbe[] = {
+       { "VolumeUp", kKeys_VolumeUp }, { "VolumeDown", kKeys_VolumeDown },
+-      { "SaveStateMenu", kKeys_SaveStateMenu }, { "Rewind", kKeys_Rewind },
++      { "Rewind", kKeys_Rewind },
+       { "Screenshot", kKeys_Screenshot }, { "DisplayPerf", kKeys_DisplayPerf },
+       { "Pause", kKeys_Pause },
+     };
+@@ -3632,7 +3632,6 @@
+     case kKeys_WindowBigger: ChangeWindowScale(1); break;
+     case kKeys_WindowSmaller: ChangeWindowScale(-1); break;
+     case kKeys_DisplayPerf: snes_osd_toggle_fps(); break;
+-    case kKeys_SaveStateMenu: g_savestate_menu_hotkey = 1; break;
+     case kKeys_Rewind: g_rewind_hotkey = 1; break;
+     case kKeys_Screenshot: RequestScreenshot(); break;
+     case kKeys_ToggleRenderer:
+@@ -3657,6 +3656,8 @@
+     }
+   }
+ }
++
++void AckmanHostHotkey(int command,bool pressed) { HandleCommand(command,pressed); }
+ 
+ static void HandleInput(int keyCode, int keyMod, bool pressed) {
+   int j = FindCmdForSdlKey(keyCode, (SDL_Keymod)keyMod);
+@@ -3959,7 +3960,6 @@
+   "VolumeDown = Keypad -\n"
+   "DisplayPerf = f\n"
+   "ToggleRenderer = r\n"
+-  "SaveStateMenu = F11\n"
+   "Rewind = F12\n"
+   "Load =      F1,     F2,     F3,     F4,     F5,     F6,     F7,     F8,     F9,     F10\n"
+   "Save = Shift+F1,Shift+F2,Shift+F3,Shift+F4,Shift+F5,Shift+F6,Shift+F7,Shift+F8,Shift+F9,Shift+F10\n"
+@@ -3979,16 +3979,6 @@
+ 
+ static const char *DefaultConfigIni(void) {
+   if (g_game->default_config_ini) return g_game->default_config_ini;
+-  if (g_game->state_menu_hotkeys) {
+-    static char menu_config[sizeof(kDefaultConfigIniContent) + 128];
+-    const char *keys = strstr(kDefaultConfigIniContent, "SaveStateMenu = F11\n");
+-    const char *after_load = strchr(strstr(keys, "Load ="), '\n') + 1;
+-    snprintf(menu_config, sizeof(menu_config), "%.*s%s%s",
+-        (int)(keys - kDefaultConfigIniContent), kDefaultConfigIniContent,
+-        "SaveStateMenu = F7\nRewind = F8\n"
+-        "Load = F1,F2,F3,F4,F5,F6,F11,F12,F9,F10\n", after_load);
+-    return menu_config;
+-  }
+   return kDefaultConfigIniContent;
+ }
+ 

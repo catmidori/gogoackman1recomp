@@ -1,0 +1,1 @@
+Drop .glsl or .glslp files here. The game can also read files put inside folders.
