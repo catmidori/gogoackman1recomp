@@ -6,14 +6,18 @@ The original game ROM is supplied separately by the user. No ROM image is embedd
 
 ## Features
 
-- **Adaptive widescreen:** scene-aware background expansion, protected cinematic framing, fade-safe transitions, and selectable 4:3 CRT or 8:7 square-pixel presentation.
-- **Graphics:** OpenGL, SDL, and software output; integer scaling; internal presentation scaling; PNG screenshots; recursive GLSL shader and preset selection.
-- **Audio:** native SNES audio, adjustable volume and sample rate, and MSU-1 replacement audio support with compatible external packages.
-- **In-game interface:** a scalable ImGui overlay with a blurred background, keyboard/mouse/gamepad navigation, embedded vector input icons, and reusable `recomp_menu_core` infrastructure.
-- **Controls:** individual and sequential remapping, exact modifier-aware conflict detection, and gameplay-driven controller rumble.
-- **Save management:** ten slots, native file dialogs, optional autosave, and hold-to-rewind playback.
-- **Mods:** native IPS translation conversion, recursive package discovery, metadata previews, and Ctrl/Shift multi-selection with batch transfers.
-- **Recovery:** deferred driver/shader/mod changes, an emergency checkpoint, controlled cold boot, a separate watchdog supervisor, and five circular fallback configuration backups.
+- In-game menu - press Esc
+- Widescreen support - User can switch between widescreen and 4:3 in real time by pressing "u" or by enabling/disabling the option on the menu
+- Switch between 4:3 and 8:7 aspect ratio (both have widescreen support)
+- Vibration/rumble support
+- Shader support when "output method" is set to OpenGL (only .glsl and .glslp shaders are supported) - shader files go in the "shaders" folder
+- Turbo function - press Tab
+- Rewind function - press "r"
+- Support for the English translation by Ackman Translations and the Brazilian Portuguese translation by E2P Traduções
+- Mod support - mods use the native format for the snesrecomp framework (.snesmod) and go in the "mods" folder
+- MSU support (untested, should work)
+- Savestates up to 10 slots and autosave support, also support for saving and loading the savestate file under a custom name
+- Run-ahead support
 
 ## Getting started
 
