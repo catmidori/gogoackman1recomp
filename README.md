@@ -1,6 +1,6 @@
 # Go Go Ackman Recompiled
 
-A desktop port of **Go Go Ackman (Japan)** built with [SNESRecomp](https://github.com/RetroPortingToolKit/snesrecomp), SDL3, and Dear ImGui. Available for Windows and Linux, including Flatpak packaging.
+A desktop port of the Snes game **Go Go Ackman** built with [SNESRecomp](https://github.com/RetroPortingToolKit/snesrecomp), SDL3, and Dear ImGui. Available for Windows and Linux, including Flatpak packaging.
 
 The original game ROM is supplied separately by the user. No ROM image is embedded in the executable.
 
@@ -17,7 +17,7 @@ The original game ROM is supplied separately by the user. No ROM image is embedd
 
 ## Getting started
 
-Launch `AckmanRecomp.exe` on Windows or `AckmanRecomp` on Linux. If the configured ROM cannot be found, the native file picker opens before the emulation core starts. Place your ROM in `rom/` for convenient selection.
+Launch `AckmanRecomp.exe` on Windows or `AckmanRecomp-1.0-x86_64.flatpak` on Linux. If the configured ROM cannot be found, the native file picker opens before the emulation core starts. Place your ROM in `rom/` for convenient selection.
 
 The supported unheadered Japanese ROM is **1,310,720 bytes**, with SHA-256:
 
@@ -30,6 +30,19 @@ An optional 512-byte copier header is normalized during verification. A differen
 Press **Esc** to open or close the menu. **Q/E** or **LB/RB** switch tabs; arrows/D-pad and Enter/gamepad A navigate and confirm. Fixed safety shortcuts also include **Tab** for turbo, **R** for rewind, and **F12** for screenshots. Additional shortcuts are configurable in Hotkeys.
 
 The overlay contains **File, Game, Graphics, Audio, Controls, Hotkeys, Mods, and Shaders**. Opening it pauses emulation. Driver, shader, and active-mod changes are applied together when it closes, through a cold boot that restores the emergency checkpoint. Changing only the selected shader while shaders remain disabled does not trigger a restart.
+
+## Compatible translations
+
+In the software's menu, when clicking the "Open .ips file" button in the [Mods] tab, an embedded script will try to convert the selected .ips file into a .snesmod file (the native format the framework used in this project recognizes), but since it's an automated script, It's success is not guaranteed. However, I already tested it with some translations, and since they successfully converted, I embedded the code for the conversion for those specific files in the program's code. The translated confirmed working are the English translation made listed below
+
+Use **Mods → Load .ips file** to convert a supported patch into a native package, then transfer it to **Active**. Activate one translation at a time. These hashes identify the IPS inputs, not the original ROM or generated package.
+
+| Name | MD5 Hash of the .ips file | Where to find it |
+| --- | --- |
+| English translation by Ackman Translations | `0dd930e3738524cc4f8a3d83326616a9` | | https://www.romhacking.net/translations/363/ |
+| Brazilian Portuguese translation by E2P Traduções | `7cc729dde829946791d18a2b27e48da6` | | https://romhackers.org/traducoes/console/super-nes/go-go-ackman-e2p-traducoes/ |
+
+These hashes match [`src/ackman_translation.h`](src/ackman_translation.h) and the supplied IPS files. The PT-BR converter applies the embedded English base before the Portuguese overlay in memory, producing one self-contained package. Unknown IPS files use a bounded native fallback; conversion alone does not establish gameplay compatibility. See [translation conversion](docs/TRANSLATION-CONVERSION.md) and [native conversion](docs/NATIVE-TRANSLATION.md).
 
 ## Configuration and user files
 
@@ -45,17 +58,6 @@ All preferences use one `config.ini`. Gameplay mappings are separate from system
 | `fallback/` | Circular recovery configuration backups |
 
 Flatpak stores writable files under `$XDG_CONFIG_HOME`, normally `~/.var/app/org.snesrecomp.AckmanRecomp/config/`. Installed read-only assets reside under `/app/share/org.snesrecomp.AckmanRecomp/`. See [Flatpak instructions](docs/FLATPAK.md).
-
-## Compatible translations
-
-Use **Mods → Load .ips file** to convert a supported patch into a native package, then transfer it to **Active**. Activate one translation at a time. These hashes identify the IPS inputs, not the original ROM or generated package.
-
-| Friendly Name | MD5 Hash |
-| --- | --- |
-| Go Go Ackman English Translation (Ackman Translations) | `0dd930e3738524cc4f8a3d83326616a9` |
-| Go Go Ackman PT-BR Translation (E2P Traduções) | `7cc729dde829946791d18a2b27e48da6` |
-
-These hashes match [`src/ackman_translation.h`](src/ackman_translation.h) and the supplied IPS files. The PT-BR converter applies the embedded English base before the Portuguese overlay in memory, producing one self-contained package. Unknown IPS files use a bounded native fallback; conversion alone does not establish gameplay compatibility. See [translation conversion](docs/TRANSLATION-CONVERSION.md) and [native conversion](docs/NATIVE-TRANSLATION.md).
 
 ## Building and testing
 
