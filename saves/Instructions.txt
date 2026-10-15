@@ -1,0 +1,1 @@
+Save states and autosaves are stored here. Keep backups before replacing your files.

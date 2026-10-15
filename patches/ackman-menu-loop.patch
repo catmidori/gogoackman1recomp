@@ -1,0 +1,59 @@
+--- a/runner/src/desktop/config.h
++++ b/runner/src/desktop/config.h
+@@ -42,6 +42,7 @@
+    * SNESRECOMP_SCREENSHOT path, which is driven by environment variables. */
+   kKeys_Screenshot,
+   kKeys_Mute,
++  kKeys_Menu,
+   kKeys_Total,
+ };
+ 
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -47,7 +47,7 @@
+   M(Load), M(Save),
+   S(Fullscreen), S(Reset),
+   S(Pause), S(PauseDimmed), S(Turbo), S(WindowBigger), S(WindowSmaller), S(VolumeUp), S(VolumeDown), S(DisplayPerf), S(ToggleRenderer), S(ToggleWidescreen),
+-  S(Rewind), S(Screenshot), S(Mute),
++  S(Rewind), S(Screenshot), S(Mute), S(Menu),
+   /* Public Ackman names; original runner spellings remain compatible aliases. */
+   {"SaveSlot1", kKeys_Save + 0, 1},
+   {"SaveSlot2", kKeys_Save + 1, 1},
+@@ -587,7 +587,7 @@
+   g_config.enable_audio = true;
+   g_config.vsync = true;g_config.pause_when_inactive = true;
+   g_config.volume = 100;
+-  g_config.rewind_depth=240;g_config.rewind_interval=2;
++  g_config.rewind_depth=240;g_config.rewind_interval=4;
+   /* Audio defaults match the values shipped in config.ini's [Sound]
+    * section. Without these a release with no config.ini next to the
+    * exe leaves audio_freq/audio_channels/audio_samples at 0, which
+@@ -631,7 +631,7 @@
+   if(g_config.run_ahead<0)g_config.run_ahead=0;
+   if(g_config.rewind_depth<4)g_config.rewind_depth=4;
+   if(g_config.rewind_depth>240)g_config.rewind_depth=240;
+-  if(g_config.rewind_interval!=4 && g_config.rewind_interval!=6)g_config.rewind_interval=2;
++  if(g_config.rewind_interval!=2 && g_config.rewind_interval!=6)g_config.rewind_interval=4;
+   if(g_config.run_ahead>ra_max)g_config.run_ahead=ra_max;
+   g_config.has_keyboard_controls = (g_config.player_src[0] == 1 ? 1 : 0) |
+                                    (g_config.player_src[1] == 1 ? 2 : 0);
+--- a/runner/src/snes_rewind.c
++++ b/runner/src/snes_rewind.c
+@@ -12,7 +12,7 @@
+ #define RW_PROBE_CAP (2u*1024u*1024u)
+ typedef struct { uint8_t *blob,*raster;size_t len,cap,raster_size;uint32_t presentation[5];int valid; } RwSlot;
+ static RwSlot *s_ring;
+-static int s_enabled=1,s_configured,s_depth=240,s_interval=2;
++static int s_enabled=1,s_configured,s_depth=240,s_interval=4;
+ static int s_head,s_count,s_frame_tick,s_open,s_sel;
+ static size_t s_blob_size;
+ void snes_rewind_shutdown(void) {
+@@ -21,7 +21,7 @@
+ }
+ void snes_rewind_configure(void) {
+     int depth=g_config.rewind_depth<4?4:g_config.rewind_depth>240?240:g_config.rewind_depth;
+-    int interval=g_config.rewind_interval==4 || g_config.rewind_interval==6?g_config.rewind_interval:2;
++    int interval=g_config.rewind_interval==2 || g_config.rewind_interval==6?g_config.rewind_interval:4;
+     if(s_configured && depth==s_depth && interval==s_interval)return;
+     snes_rewind_shutdown();s_depth=depth;s_interval=interval;s_configured=1;
+     const char *off=getenv("SNESRECOMP_REWIND");if(off && off[0]=='0'){s_enabled=0;return;}

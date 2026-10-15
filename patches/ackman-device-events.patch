@@ -1,0 +1,114 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -1,4 +1,5 @@
+ #include "ackman_menu.h"
++#include "ackman_devices.h"
+ #include "ackman_rumble.h"
+ #include "ackman_debug.h"
+ #include "ackman_flow.h"
+@@ -1265,8 +1266,24 @@
+  * keyboard player never saw it, and the headless self-test injects pad words
+  * below the event layer, so it never saw it either. Returns true when the
+  * event was one of ours. */
++static bool SelftestPadExcludes(uint32 id);
+ static bool HandleDeviceEvent(const SDL_Event *event) {
+   GamepadInfo *gi;
++  AckmanDeviceInfo device;
++  if (AckmanDevicesReady(event,&device)) {
++    if (!device.id || GetGamepadInfo(device.id) || SelftestPadExcludes(device.id)) return true;
++    int slot=-1;
++    if (device.player>=0 && device.player<2 && g_config.enable_gamepad[device.player] &&
++        g_gamepad[device.player].joystick_id==-1) slot=device.player;
++    for (int i=0;i<2 && slot<0;i++)
++      if (g_config.enable_gamepad[i] && g_gamepad[i].joystick_id==-1) slot=i;
++    if (slot>=0) {
++      gi=&g_gamepad[slot];memset(gi,0,sizeof(*gi));gi->index=slot;
++      gi->joystick_id=device.id;gi->raw_joystick=device.pad==NULL;
++      gi->joystick=gi->raw_joystick?device.joystick:NULL;
++    }
++    return true;
++  }
+   switch (event->type) {
+   case SDL_CONTROLLERDEVICEADDED:
+     OpenOneGamepad(event->cdevice.which);
+@@ -1301,7 +1318,7 @@
+   case SDL_JOYDEVICEREMOVED:
+     gi = GetGamepadInfo(event->jdevice.which);
+     if (gi && gi->raw_joystick) {
+-      if (gi->joystick) SDL_JoystickClose(gi->joystick);
++      /* The async device owner closes only after pointers are unpublished. */
+       memset(gi, 0, sizeof(GamepadInfo));
+       gi->joystick_id = -1;
+     }
+@@ -3624,69 +3641,11 @@
+ }
+ 
+ static void OpenOneGamepad(int i) {
+-  if (!SDL_IsGameController(i)) {
+-    OpenOneJoystick(i);
+-    return;
+-  }
+-  SDL_GameController *controller = SDL_GameControllerOpen(i);
+-  if (!controller) {
+-    fprintf(stderr, "Could not open gamepad %d: %s\n", i, SDL_GetError());
+-    return;
+-  }
+-
+-  uint32 joystick_id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller));
+-  if (GetGamepadInfo(joystick_id) || SelftestPadExcludes(joystick_id)) {
+-    SDL_GameControllerClose(controller);
+-    return;
+-  }
+-
+-  uint8 scan_order[3] = { SDL_GameControllerGetPlayerIndex(controller), 0, 1 };
+-  /* The self-test pad must be player 1: the overlay gestures read seat 0. */
+-  if (g_selftest_pad && SDL_JoystickInstanceID(g_selftest_pad) == joystick_id)
+-    scan_order[0] = 0;
+-
+-  int found_idx = -1;
+-  for (int k = 0; k < 3; k++) {
+-    uint8 j = scan_order[k];
+-    if (j < 2 && g_config.enable_gamepad[j] && (k == 0 || g_gamepad[j].joystick_id == -1)) {
+-      found_idx = j;
+-      break;
+-    }
+-  }
+-
+-  printf("Found controller '%s' assigning to player %d\n", SDL_GameControllerName(controller), found_idx + 1);
+-  if (found_idx >= 0) {
+-    GamepadInfo *gi = &g_gamepad[found_idx];
+-    memset(gi, 0, sizeof(GamepadInfo));
+-    gi->index = found_idx;
+-    gi->joystick_id = joystick_id;
+-  }
++  AckmanDevicesRequest((SDL_JoystickID)i);
+ }
+ 
+ static void OpenOneJoystick(int i) {
+-  if (SDL_IsGameController(i)) return;
+-  SDL_Joystick *joystick = SDL_JoystickOpen(i);
+-  if (!joystick) {
+-    fprintf(stderr, "Could not open raw joystick %d: %s\n", i, SDL_GetError());
+-    return;
+-  }
+-  SDL_JoystickID id = SDL_JoystickInstanceID(joystick);
+-  if (GetGamepadInfo(id) || SelftestPadExcludes(id)) { SDL_JoystickClose(joystick); return; }
+-  int slot = -1;
+-  for (int j = 0; j < 2; ++j) {
+-    if (g_config.enable_gamepad[j] && g_gamepad[j].joystick_id == -1) {
+-      slot = j; break;
+-    }
+-  }
+-  if (slot < 0) { SDL_JoystickClose(joystick); return; }
+-  GamepadInfo *gi = &g_gamepad[slot];
+-  memset(gi, 0, sizeof(*gi));
+-  gi->joystick = joystick;
+-  gi->raw_joystick = true;
+-  gi->index = slot;
+-  gi->joystick_id = id;
+-  printf("Found unmapped raw joystick '%s' assigning to player %d\n",
+-         SDL_JoystickName(joystick), slot + 1);
++  AckmanDevicesRequest((SDL_JoystickID)i);
+ }
+ 
+ static int RemapSdlButton(int button) {

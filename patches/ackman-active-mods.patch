@@ -1,0 +1,75 @@
+--- a/runner/src/mod_runtime.cpp
++++ b/runner/src/mod_runtime.cpp
+@@ -3471,3 +3471,35 @@
+     return nullptr;
+ #endif
+ }
++
++extern "C" int snes_mod_runtime_select_package_c(const char *id,const char *version,int enabled) {
++    auto &runtime=SNESRecomp::state();
++    if(!runtime.initialized)return 0;
++    auto previous=runtime.selections;
++    if(!id) {
++        runtime.selections.clear();
++        for(const auto &entry:runtime.packages)for(const auto &v:entry.second) {
++            auto &selection=SNESRecomp::package_selection(runtime,v.second);
++            for(const auto &feature:v.second.features) {
++                auto &f=selection.features[feature.id];f.enabled=false;f.has_enabled=true;
++            }
++        }
++    } else {
++        auto package=runtime.packages.find(id);
++        if(package==runtime.packages.end())return 0;
++        auto v=package->second.find(version?version:"");
++        if(v==package->second.end())return 0;
++        auto &selection=SNESRecomp::package_selection(runtime,v->second);
++        selection.version=v->second.version;
++        for(const auto &feature:v->second.features) {
++            auto &f=selection.features[feature.id];f.enabled=enabled!=0;f.has_enabled=true;
++        }
++    }
++    runtime.validation=SNESRecomp::validate(runtime);
++    if(!runtime.validation.ok) {
++        runtime.selections=std::move(previous);
++        runtime.validation=SNESRecomp::validate(runtime);
++        runtime.error="Package cannot be activated by this build.";return 0;
++    }
++    runtime.error.clear();return 1;
++}
+--- a/runner/src/mod_runtime.h
++++ b/runner/src/mod_runtime.h
+@@ -292,3 +292,13 @@
+ #ifdef __cplusplus
+ }
+ #endif
++
++/* Game-owned file selection. NULL clears all features, including default-on
++ * features. An enabled selection is validated and rolled back on failure. */
++#ifdef __cplusplus
++extern "C" {
++#endif
++int snes_mod_runtime_select_package_c(const char *id,const char *version,int enabled);
++#ifdef __cplusplus
++}
++#endif
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -775,6 +775,8 @@
+   else if(!strcmp(name,"Autosave"))g_config.autosave=value!=0;
+   else if(!strcmp(name,"PauseWhenInactive"))g_config.pause_when_inactive=value!=0;
+   else if(!strcmp(name,"NoSpriteLimits"))g_config.no_sprite_limits=value!=0;
++  else if(!strcmp(name,"Mod")) { AckmanMenuModSelect(value);AckmanMenuModTransfer(); }
++  else if(!strcmp(name,"Reboot"))AckmanMenuCommand(ACK_MENU_RESET);
+   else { fprintf(stderr,"script: unknown host option %s\n",name);return; }
+   fprintf(stderr,"[script-option] %s=%d\n",name,value);
+ }
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -552,6 +552,7 @@
+ 
+ static void ReadConfigEntry(void *context, const char *section, const char *key, const char *value) {
+   (void)context;
++  if(!SDL_strcasecmp(section,"ActiveMods"))return; /* Wrapper-owned bare filename list. */
+   char name[160]; snprintf(name, sizeof(name), "[%s]", section);
+   int id = GetIniSection(name);
+   char *copy = SDL_strdup(value);

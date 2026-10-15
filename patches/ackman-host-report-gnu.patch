@@ -1,0 +1,25 @@
+--- a/runner/src/host_report.c
++++ b/runner/src/host_report.c
+@@ -1,3 +1,7 @@
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE 1
++#endif
++
+ /*
+  * host_report.c — always-on host-side crash/diagnostic capture.
+  *
+@@ -23,14 +27,6 @@
+  *   - recorder is dumb and allocation-free on the crash path; dbghelp
+  *     is resolved dynamically so no game build config needs new libs.
+  */
+-
+-/* dl_iterate_phdr() and struct dl_phdr_info are glibc GNU extensions guarded by
+- * _GNU_SOURCE; newer glibc (GCC 13+) no longer leaks them without it, so the
+- * Linux module-list path fails to compile unless we ask for the GNU API here,
+- * before any system header pulls in <features.h>. */
+-#if defined(__linux__) && !defined(_GNU_SOURCE)
+-#  define _GNU_SOURCE 1
+-#endif
+ 
+ #include "host_report.h"
+ 

@@ -1,0 +1,36 @@
+{
+  "analysis_input_digest": "89c3129030a77949a1cc7a5b47e50d5bcdbcc297d1489fc72b6178c0171f0d90",
+  "bank_outputs": {
+    "00": [
+      "bank00_v2.c"
+    ],
+    "80": [
+      "bank80_v2.c"
+    ],
+    "A2": [
+      "banka2_v2.c"
+    ]
+  },
+  "banks": {
+    "00": "596dac4d1451972b2d3da80a2f09ec2353ffbc456435927651bcb631d7a50319",
+    "80": "d2b1efb6ff4ed404d37274cc466fe238d3e1fb088d03dd2dc2cf371a4d2618b6",
+    "A2": "e8c614992f55ad975158985f757f8149c66f5ecf2bae57dbec62030a8d63cee1"
+  },
+  "config_digest": "96f4d1e5c572b8b1eee5d950d7874110fe1839a02c810239af590a44c2636d6d",
+  "format_version": 4,
+  "generator_digest": "87fcfad94f1424ae1463dd4ff6679efe55ded88560ad2182c473a2ea95cb5119",
+  "outputs": {
+    "bank00_v2.c": "bc468cce5fdabcbb0d3c509f0822b8299651af81c32dc1cfd5419e339b98048a",
+    "bank80_v2.c": "0ccba8a03f311243a2a704302a1d297f42184daeb0a9637a45a0cea87633011f",
+    "banka2_v2.c": "b642125debed6ef2b70a97f077e08c88f2d74b94e8dcda43d7a2711cdddeff44",
+    "dispatch_v2.c": "abb236aab05e7a2efdff9e3a70a8eebc1f42150ce15d436b8b72f45cc150b462",
+    "program_manifest.json": "864455bf38cf57a753234ca99de74b1e68c54786bc57c0aeb50dbbe6e0106e9e",
+    "unresolved_stubs_v2.c": "47085f485c3e8d488d105e0aa641f1300af226efabf3dd2147b09c137edb49b7"
+  },
+  "stats": {
+    "banks": 3,
+    "emitted_variants": 89,
+    "lle_variants": 0,
+    "roots": 9
+  }
+}

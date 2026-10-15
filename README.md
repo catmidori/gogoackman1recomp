@@ -1,0 +1,112 @@
+# Go Go Ackman Recompiled
+
+A desktop port of **Go Go Ackman (Japan)** built with [SNESRecomp](https://github.com/RetroPortingToolKit/snesrecomp), SDL3, and Dear ImGui. Available for Windows and Linux, including Flatpak packaging.
+
+The original game ROM is supplied separately by the user. No ROM image is embedded in the executable.
+
+## Features
+
+- **Adaptive widescreen:** scene-aware background expansion, protected cinematic framing, fade-safe transitions, and selectable 4:3 CRT or 8:7 square-pixel presentation.
+- **Graphics:** OpenGL, SDL, and software output; integer scaling; internal presentation scaling; PNG screenshots; recursive GLSL shader and preset selection.
+- **Audio:** native SNES audio, adjustable volume and sample rate, and MSU-1 replacement audio support with compatible external packages.
+- **In-game interface:** a scalable ImGui overlay with a blurred background, keyboard/mouse/gamepad navigation, embedded vector input icons, and reusable `recomp_menu_core` infrastructure.
+- **Controls:** individual and sequential remapping, exact modifier-aware conflict detection, and gameplay-driven controller rumble.
+- **Save management:** ten slots, native file dialogs, optional autosave, and hold-to-rewind playback.
+- **Mods:** native IPS translation conversion, recursive package discovery, metadata previews, and Ctrl/Shift multi-selection with batch transfers.
+- **Recovery:** deferred driver/shader/mod changes, an emergency checkpoint, controlled cold boot, a separate watchdog supervisor, and five circular fallback configuration backups.
+
+## Getting started
+
+Launch `AckmanRecomp.exe` on Windows or `AckmanRecomp` on Linux. If the configured ROM cannot be found, the native file picker opens before the emulation core starts. Place your ROM in `rom/` for convenient selection.
+
+The supported unheadered Japanese ROM is **1,310,720 bytes**, with SHA-256:
+
+```text
+e8a33b6c8e15cf0aa60e9694471a51926fb97ad895d4714384c6abff28a33a1f
+```
+
+An optional 512-byte copier header is normalized during verification. A different revision requires separate analysis and validation.
+
+Press **Esc** to open or close the menu. **Q/E** or **LB/RB** switch tabs; arrows/D-pad and Enter/gamepad A navigate and confirm. Fixed safety shortcuts also include **Tab** for turbo, **R** for rewind, and **F12** for screenshots. Additional shortcuts are configurable in Hotkeys.
+
+The overlay contains **File, Game, Graphics, Audio, Controls, Hotkeys, Mods, and Shaders**. Opening it pauses emulation. Driver, shader, and active-mod changes are applied together when it closes, through a cold boot that restores the emergency checkpoint. Changing only the selected shader while shaders remain disabled does not trigger a restart.
+
+## Configuration and user files
+
+All preferences use one `config.ini`. Gameplay mappings are separate from system hotkeys. The program creates factory defaults when the file is missing; existing user values are preserved.
+
+| Directory | Purpose |
+| --- | --- |
+| `rom/` | Default ROM picker location |
+| `saves/` | Save slots, custom states, and `GGA1_autosave.sav` |
+| `mods/` | Native `.snesmod` packages and MSU-1 packages |
+| `shaders/` | Recursive `.glsl` and `.glslp` discovery |
+| `screenshots/` | Opaque, compressed PNG captures |
+| `fallback/` | Circular recovery configuration backups |
+
+Flatpak stores writable files under `$XDG_CONFIG_HOME`, normally `~/.var/app/org.snesrecomp.AckmanRecomp/config/`. Installed read-only assets reside under `/app/share/org.snesrecomp.AckmanRecomp/`. See [Flatpak instructions](docs/FLATPAK.md).
+
+## Compatible translations
+
+Use **Mods → Load .ips file** to convert a supported patch into a native package, then transfer it to **Active**. Activate one translation at a time. These hashes identify the IPS inputs, not the original ROM or generated package.
+
+| Friendly Name | MD5 Hash |
+| --- | --- |
+| Go Go Ackman English Translation (Ackman Translations) | `0dd930e3738524cc4f8a3d83326616a9` |
+| Go Go Ackman PT-BR Translation (E2P Traduções) | `7cc729dde829946791d18a2b27e48da6` |
+
+These hashes match [`src/ackman_translation.h`](src/ackman_translation.h) and the supplied IPS files. The PT-BR converter applies the embedded English base before the Portuguese overlay in memory, producing one self-contained package. Unknown IPS files use a bounded native fallback; conversion alone does not establish gameplay compatibility. See [translation conversion](docs/TRANSLATION-CONVERSION.md) and [native conversion](docs/NATIVE-TRANSLATION.md).
+
+## Building and testing
+
+Requirements include a C/C++17 toolchain, CMake, Python for build-time asset generation, Git, and SDL3. The framework revision is pinned by `framework.lock`; local integration patches are applied by the build pipeline. See [the complete build guide](docs/BUILDING.md) for framework setup, ROM analysis, toolchain options, and generated sources.
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+The current automated suite contains **14 CTests**. Automated results do not replace physical gamepad, display, audio, or full-game validation. Older reports in `docs/` retain their original dates and test counts as development history.
+
+For a native Linux Flatpak bundle:
+
+```sh
+sh scripts/build_flatpak.sh
+flatpak install --user "dist/AckmanRecomp-$(flatpak --default-arch).flatpak"
+flatpak run org.snesrecomp.AckmanRecomp
+```
+
+Build on a Linux filesystem when using WSL; Windows-mounted volumes may not support the permission operations required by Flatpak tooling.
+
+## Documentation
+
+- [Technical context and development history](docs/CONTEXTO_GERAL.md)
+- [Configuration](docs/CONFIGURACAO.md)
+- [Reusable menu core](docs/RECOMP_MENU_CORE.md)
+- [Controller feedback](docs/HAPTIC-RUMBLE.md)
+- [Mods interface](docs/MODS-MENU.md)
+- [Validation protocol](docs/VALIDACAO.md)
+
+## Credits and third-party assets
+
+- [SNESRecomp](https://github.com/RetroPortingToolKit/snesrecomp) and its contributors provide the recompilation framework and runner.
+- SDL3 and Dear ImGui provide the desktop platform and interface foundations; NanoSVG rasterizes embedded vector assets.
+- **Input glyphs are from [Kenney Input Prompts](https://kenney.nl/assets/input-prompts), created by Kenney and distributed under CC0.** The embedded keyboard, mouse, and controller prompts retain this attribution.
+- Open Sans provides the redistributable font fallback under the SIL Open Font License; its notice is included in `assets/fonts/OFL.txt`.
+- Translation credits belong to **Ackman Translations** and **E2P Traduções / Sonic_Spin**. Their original metadata and Readmes are retained in generated packages.
+
+See [third-party provenance](THIRD_PARTY.md) and individual dependency notices. This project does not relicense the original game or its dependencies. ROMs, personal saves, and external MSU-1 audio assets are not part of the source distribution.
+
+## License and Acknowledgements
+
+Code specific to this port is licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE), consistent with the
+SNESRecomp framework. It is source-available for noncommercial use;
+PolyForm Noncommercial is not an OSI-approved open-source license.
+
+Distributed binaries include third-party code under the MIT, ISC and
+zlib licenses. Full copyright notices, license texts and asset
+acknowledgements, including Kenney Input Prompts (CC0 1.0 Universal),
+are provided in [THIRD_PARTY_ATTRIBUTION.md](THIRD_PARTY_ATTRIBUTION.md).
+Include that file and LICENSE with every binary distribution.

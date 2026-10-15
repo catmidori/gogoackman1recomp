@@ -1,0 +1,181 @@
+wait 90
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35
+press start 2
+wait 35
+press b 2
+wait 35

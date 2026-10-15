@@ -1,0 +1,62 @@
+--- a/runner/src/desktop/config.h
++++ b/runner/src/desktop/config.h
+@@ -68,6 +68,7 @@
+   uint16 audio_samples;
+   bool autosave;
+   bool pause_when_inactive;
++  bool controller_vibration;
+   bool no_sprite_limits;
+   // Render genuine extra PPU columns to match the current display aspect.
+   // This is host presentation state, not emulated game state.
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -529,6 +529,8 @@
+     } else if (StringEqualsNoCase(key, "RunAhead")) {
+       g_config.run_ahead = (int)strtol(value, (char **)NULL, 10);
+       return true;
++    } else if (StringEqualsNoCase(key, "ControllerVibration")) {
++      return ParseBool(value, &g_config.controller_vibration);
+     } else if (StringEqualsNoCase(key, "PauseWhenInactive")) {
+       return ParseBool(value, &g_config.pause_when_inactive);
+     } else if (StringEqualsNoCase(key, "Autosave")) {
+@@ -585,7 +587,7 @@
+   g_config.window_scale = 1; g_config.new_renderer = true;
+   s_widescreen_seen=false;g_config.ignore_aspect_ratio=true;
+   g_config.enable_audio = true;
+-  g_config.vsync = true;g_config.pause_when_inactive = true;
++  g_config.vsync = true;g_config.pause_when_inactive = true;g_config.controller_vibration = true;
+   g_config.volume = 100;
+   g_config.rewind_depth=240;g_config.rewind_interval=4;
+   /* Audio defaults match the values shipped in config.ini's [Sound]
+@@ -689,6 +691,7 @@
+   values[count] = (AckmanIniValue){section, key, value}; ++count; \
+ } while (0)
+   NUMBER("General", "Autosave", g_config.autosave);
++  NUMBER("General", "ControllerVibration", g_config.controller_vibration);
+   NUMBER("General", "PauseWhenInactive", g_config.pause_when_inactive);
+   NUMBER("General", "DisableFrameDelay", g_config.disable_frame_delay);
+   NUMBER("General", "RunAhead", g_config.run_ahead);
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -1,4 +1,5 @@
+ #include "ackman_menu.h"
++#include "ackman_rumble.h"
+ #include "ackman_debug.h"
+ #include "ackman_flow.h"
+ /*
+@@ -783,6 +784,7 @@
+   else if(!strcmp(name,"AudioFreq"))AckmanMenuSetSampleRate(value);
+   else if(!strcmp(name,"Autosave"))g_config.autosave=value!=0;
+   else if(!strcmp(name,"PauseWhenInactive"))g_config.pause_when_inactive=value!=0;
++  else if(!strcmp(name,"ControllerVibration")){g_config.controller_vibration=value!=0;AckmanRumbleSetEnabled(g_config.controller_vibration);}
+   else if(!strcmp(name,"NoSpriteLimits"))g_config.no_sprite_limits=value!=0;
+   else if(!strcmp(name,"Mod")) { AckmanMenuModSelect(value);AckmanMenuModTransfer(); }
+   else if(!strcmp(name,"Reboot"))AckmanMenuCommand(ACK_MENU_RESET);
+@@ -1751,6 +1753,7 @@
+ #endif
+ 
+ static void SetAudioPaused(bool paused) {
++  AckmanRumbleSuspend(paused);
+ #if SNESRECOMP_SDL3
+   if (g_audio_stream) {
+     if (paused) SDL_PauseAudioStreamDevice(g_audio_stream);

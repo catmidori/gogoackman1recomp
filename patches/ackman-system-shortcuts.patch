@@ -1,0 +1,160 @@
+--- a/runner/src/desktop/config.h
++++ b/runner/src/desktop/config.h
+@@ -41,6 +41,7 @@
+   /* OpenGL-only framebuffer capture. Kept separate from the diagnostic
+    * SNESRECOMP_SCREENSHOT path, which is driven by environment variables. */
+   kKeys_Screenshot,
++  kKeys_Mute,
+   kKeys_Total,
+ };
+ 
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -45,7 +45,11 @@
+   M(Load), M(Save),
+   S(Fullscreen), S(Reset),
+   S(Pause), S(PauseDimmed), S(Turbo), S(WindowBigger), S(WindowSmaller), S(VolumeUp), S(VolumeDown), S(DisplayPerf), S(ToggleRenderer), S(ToggleWidescreen),
+-  S(SaveStateMenu), S(Rewind), S(Screenshot),
++  S(SaveStateMenu), S(Rewind), S(Screenshot), S(Mute),
++  /* Public Ackman names; original runner spellings remain compatible aliases. */
++  {"ToggleFPS", kKeys_DisplayPerf, 1},
++  {"ScaleUp", kKeys_WindowBigger, 1},
++  {"ScaleDown", kKeys_WindowSmaller, 1},
+ };
+ #undef S
+ #undef M
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -57,6 +57,7 @@
+ #include "common_cpu_infra.h"
+ #include "framedump.h"
+ #include "config.h"
++#include "ackman_video.h"
+ #include "display_aspect.h"
+ #include "crc32.h"
+ #include "util.h"
+@@ -146,6 +147,7 @@
+ static void HandleVolumeAdjustment(int volume_adjustment);
+ static void ApplyVolume(void);
+ static bool g_volume_changed;
++static bool g_muted; /* session toggle; Sound.Volume remains the desired level */
+ static void HandleGamepadAxisInput(GamepadInfo *gi, int axis, Sint16 value);
+ static int RemapSdlButton(int button);
+ static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed);
+@@ -521,6 +523,7 @@
+   uint32 mask;      // button bits to hold
+   int hold_frames;  // frames to hold mask (0 = release)
+   int wait_frames;  // frames to wait after hold ends before next entry
++  SDL_Keycode host_key; // optional unmodified SDL key tap, through the normal event pump
+   uint32 poke_addr; // script-only WRAM write address
+   uint8 *poke_bytes;
+   int poke_count;
+@@ -638,6 +641,7 @@
+ }
+ 
+ /* Script grammar, one command per line, `#` comments:
++ *   hostkey <SDL key name>  tap a host key through SDL (no modifiers)
+  *   wait N                  frames before the next command
+  *   press <buttons> [N]     hold a+b+... for N frames (default 1)
+  *   loadstate N             load save-state slot N
+@@ -672,6 +676,14 @@
+       e->mask = (strcmp(cmd, "savestate") == 0 ? 0x10000000 : 0x80000000) | (slot & 0xF);
+       e->hold_frames = 1;
+       e->wait_frames = pending_wait;
++      pending_wait = 0;
++    } else if (strcmp(cmd, "hostkey") == 0) {
++      char name[128] = {0};
++      if (sscanf(line, "%*s %127[^\r\n]", name) != 1) continue;
++      SDL_Keycode key = SDL_GetKeyFromName(name);
++      if (!key) { fprintf(stderr, "script: unknown host key '%s'\n", name); continue; }
++      ScriptEntry *e = NewScriptEntry(&cap);
++      e->host_key = key; e->hold_frames = 1; e->wait_frames = pending_wait;
+       pending_wait = 0;
+     } else if (strcmp(cmd, "forcepoke") == 0) {
+       unsigned addr = 0;
+@@ -773,6 +785,13 @@
+           AddScriptForcePoke(e->poke_addr, e->poke_bytes, e->poke_count);
+         return 0;
+       }
++      if (e->host_key) {
++        SDL_Event key = {0}; key.type = SDL_KEYDOWN;
++        SNESRECOMP_SDL_EVENT_KEY(key) = e->host_key;
++        SDL_PushEvent(&key);
++        key.type = SDL_KEYUP; SDL_PushEvent(&key);
++        return 0;
++      }
+       return e->mask;
+     }
+     // hold done — advance
+@@ -2086,7 +2105,7 @@
+     if (event.type == SDL_KEYDOWN &&
+         SNESRECOMP_SDL_EVENT_KEY(event) == SDLK_ESCAPE)
+       *want_soft_exit = 1;
+-    if (event.type == SDL_KEYDOWN)
++    if (event.type == SDL_KEYDOWN && !SNESRECOMP_SDL_EVENT_REPEAT(event))
+       HandleInput(SNESRECOMP_SDL_EVENT_KEY(event), SNESRECOMP_SDL_EVENT_MOD(event), true);
+     if (event.type == SDL_KEYUP)
+       HandleInput(SNESRECOMP_SDL_EVENT_KEY(event), SNESRECOMP_SDL_EVENT_MOD(event), false);
+@@ -2493,6 +2512,7 @@
+           g_config.window_scale        = (uint8)ls.window_scale;
+           g_config.fullscreen          = (uint8)ls.fullscreen;
+           g_config.ignore_aspect_ratio = ls.ignore_aspect != 0;
++          AckmanVideoSetWidescreen(g_config.ignore_aspect_ratio);
+           g_config.linear_filtering    = ls.linear_filter != 0;
+           if (game->display_aspect_supported)
+             g_config.display_aspect = (uint8)SnesDisplayAspect_Clamp(ls.aspect_index);
+@@ -2978,6 +2998,7 @@
+         }
+         break;
+       case SDL_KEYDOWN:
++        if (SNESRECOMP_SDL_EVENT_REPEAT(event)) break;
+         HandleInput(SNESRECOMP_SDL_EVENT_KEY(event),
+                     SNESRECOMP_SDL_EVENT_MOD(event), true);
+         break;
+@@ -3447,7 +3468,7 @@
+       snesrecomp_sdl_show_cursor(g_cursor);
+       break;
+     case kKeys_Reset:
+-      RtlReset(1);
++      AckmanMenuCommand(ACK_MENU_RESET);
+       GameReset();
+       break;
+     case kKeys_Pause: g_paused = !g_paused; break;
+@@ -3475,7 +3496,15 @@
+                   (g_ppu_render_flags & kPpuRenderFlags_NewRenderer) != 0;
+       break;
+     case kKeys_ToggleWidescreen:
+-      printf("Widescreen is a per-title presentation setting; see the launcher's Mods page.\n");
++      g_config.ignore_aspect_ratio = !g_config.ignore_aspect_ratio;
++      AckmanVideoSetWidescreen(g_config.ignore_aspect_ratio);
++      host_report_breadcrumb("Ackman aspect: %s", AckmanVideoWidescreen() ? "adaptive widescreen" : "native 4:3");
++      if (g_paused) DrawPpuFrameWithPerf();
++      break;
++    case kKeys_Mute:
++      g_muted = !g_muted;
++      ApplyVolume();
++      snes_osd_note_volume(g_muted ? 0 : g_config.volume);
+       break;
+     case kKeys_VolumeUp:
+     case kKeys_VolumeDown: HandleVolumeAdjustment(j == kKeys_VolumeUp ? 1 : -1); break;
+@@ -3642,16 +3671,16 @@
+   int v = g_config.volume < 0 ? 0 : g_config.volume > 100 ? 100 : g_config.volume;
+   g_config.volume = v;
+ #if SYSTEM_VOLUME_MIXER_AVAILABLE
+-  SetApplicationVolume(v);
+-#endif
+-  g_sdl_audio_mixer_volume = (v * SNESRECOMP_SDL_MIX_MAXVOLUME + 50) / 100;
++  SetApplicationVolume(g_muted ? 0 : v);
++#endif
++  g_sdl_audio_mixer_volume = g_muted ? 0 : (v * SNESRECOMP_SDL_MIX_MAXVOLUME + 50) / 100;
+ }
+ static void HandleVolumeAdjustment(int volume_adjustment) {
+   g_config.volume = IntMin(IntMax(0, g_config.volume + volume_adjustment * 5), 100);
+   ApplyVolume();
+   g_volume_changed = true;
+   /* The bar at the right edge of the frame, for a moment. */
+-  snes_osd_note_volume(g_config.volume);
++  snes_osd_note_volume(g_muted ? 0 : g_config.volume);
+ }
+ 
+ // Approximates atan2(y, x) normalized to the [0,4) range

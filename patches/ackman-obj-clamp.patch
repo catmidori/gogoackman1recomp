@@ -1,0 +1,31 @@
+--- a/runner/src/snes/ppu.c
++++ b/runner/src/snes/ppu.c
+@@ -2008,7 +2008,15 @@
+     if (win.bits & (1 << windex))
+       continue;  // layer is disabled for this window part
+     int left = win.edges[windex];
+-    int width = win.edges[windex + 1] - left;
++    int right = win.edges[windex + 1];
++    // Host presentation bit 4 clips OBJ without changing OAM evaluation,
++    // native pixels, windows, priorities or the background margin budget.
++    if (ppu->wsLayerClamp & 0x10) {
++      left = IntMax(left, 0);
++      right = IntMin(right, 256);
++    }
++    int width = right - left;
++    if (width <= 0) continue;
+     PpuZbufType *src = ppu->objBuffer.data + left + kPpuExtraLeftRight;
+     PpuZbufType *dst = ppu->bgBuffers[sub].data + left + kPpuExtraLeftRight;
+     if (clear_backdrop) {
+--- a/runner/src/snes/ppu.h
++++ b/runner/src/snes/ppu.h
+@@ -714,7 +714,8 @@
+ const uint8_t *PpuGetMode2Bg1Palette(const Ppu *ppu);
+ 
+ // Per-layer widescreen clamp: bit L keeps BG(L+1) in the authentic 256
+-// columns while other layers extend into the margins. Re-apply per frame.
++// columns while other layers extend into the margins. Bit 4 clips OBJ to
++// the native viewport without affecting OAM. Re-apply per frame.
+ void PpuSetWidescreenLayerClamp(Ppu *ppu, uint8_t mask);
+ 
+ // Extend selected game-authored PPU windows by the current widescreen margins

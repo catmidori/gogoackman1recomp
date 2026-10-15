@@ -1,0 +1,341 @@
+--- a/runner/src/desktop/config.h
++++ b/runner/src/desktop/config.h
+@@ -66,6 +66,7 @@
+   uint8 audio_channels;
+   uint16 audio_samples;
+   bool autosave;
++  bool pause_when_inactive;
+   bool no_sprite_limits;
+   // Render genuine extra PPU columns to match the current display aspect.
+   // This is host presentation state, not emulated game state.
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -4,6 +4,7 @@
+ // Noncommercial, the retained upstream material stays MIT.
+ #include "config.h"
+ #include "ackman_config.h"
++#include "snes_runahead.h"
+ #include "types.h"
+ #include <stdio.h>
+ #include <string.h>
+@@ -445,7 +446,7 @@
+       g_config.window_scale = (uint8)strtol(value, (char**)NULL, 10);
+       return true;
+     } else if (StringEqualsNoCase(key, "OutputMethod")) {
+-      g_config.output_method = StringEqualsNoCase(value, "SDL-Software") ? kOutputMethod_SDLSoftware :
++      g_config.output_method = (StringEqualsNoCase(value, "SDL-Software") || StringEqualsNoCase(value, "Software")) ? kOutputMethod_SDLSoftware :
+                                StringEqualsNoCase(value, "OpenGL") ? kOutputMethod_OpenGL : kOutputMethod_SDL;
+       return true;
+     } else if (StringEqualsNoCase(key, "LinearFiltering")) {
+@@ -479,6 +480,8 @@
+     if (StringEqualsNoCase(key, "RunAhead")) {
+       g_config.run_ahead = (int)strtol(value, (char **)NULL, 10);
+       return true;
++    } else if (StringEqualsNoCase(key, "PauseWhenInactive")) {
++      return ParseBool(value, &g_config.pause_when_inactive);
+     } else if (StringEqualsNoCase(key, "Autosave")) {
+       g_config.autosave = (bool)strtol(value, (char **)NULL, 10);
+       return true;
+@@ -531,7 +534,7 @@
+   g_config.window_width = 1344; g_config.window_height = 672;
+   g_config.window_scale = 3; g_config.new_renderer = true;
+   g_config.enable_audio = true;
+-  g_config.vsync = true;
++  g_config.vsync = true;g_config.pause_when_inactive = true;
+   g_config.volume = 80;
+   /* Audio defaults match the values shipped in config.ini's [Sound]
+    * section. Without these a release with no config.ini next to the
+@@ -572,6 +575,9 @@
+     filename = "config.ini";
+   if (!AckmanIniRead(AckmanConfigPath(), ReadConfigEntry, NULL))
+     fprintf(stderr, "Warning: Unable to read config file %s\n", filename);
++  int ra_max=SNES_RUNAHEAD_MAX<10?SNES_RUNAHEAD_MAX:10;
++  if(g_config.run_ahead<0)g_config.run_ahead=0;
++  if(g_config.run_ahead>ra_max)g_config.run_ahead=ra_max;
+   g_config.has_keyboard_controls = (g_config.player_src[0] == 1 ? 1 : 0) |
+                                    (g_config.player_src[1] == 1 ? 2 : 0);
+   RegisterDefaultKeys();
+@@ -628,6 +634,7 @@
+   values[count] = (AckmanIniValue){section, key, value}; ++count; \
+ } while (0)
+   NUMBER("General", "Autosave", g_config.autosave);
++  NUMBER("General", "PauseWhenInactive", g_config.pause_when_inactive);
+   NUMBER("General", "DisableFrameDelay", g_config.disable_frame_delay);
+   NUMBER("General", "RunAhead", g_config.run_ahead);
+   NUMBER("Graphics", "VSync", g_config.vsync);
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -523,7 +523,9 @@
+   uint32 mask;      // button bits to hold
+   int hold_frames;  // frames to hold mask (0 = release)
+   int wait_frames;  // frames to wait after hold ends before next entry
+-  SDL_Keycode host_key; // optional unmodified SDL key tap, through the normal event pump
++  SDL_Keycode host_key;
++  char host_option[32];
++  int host_value,focus_ms; // optional unmodified SDL key tap, through the normal event pump
+   uint32 poke_addr; // script-only WRAM write address
+   uint8 *poke_bytes;
+   int poke_count;
+@@ -642,6 +644,8 @@
+ 
+ /* Script grammar, one command per line, `#` comments:
+  *   hostkey <SDL key name>  tap a host key through SDL (no modifiers)
++ *   hostoption <name> N    live menu preference (numeric backend value)
++ *   hostfocus N            lose focus, then regain it N milliseconds later
+  *   wait N                  frames before the next command
+  *   press <buttons> [N]     hold a+b+... for N frames (default 1)
+  *   loadstate N             load save-state slot N
+@@ -677,6 +681,10 @@
+       e->hold_frames = 1;
+       e->wait_frames = pending_wait;
+       pending_wait = 0;
++    } else if(strcmp(cmd,"hostoption")==0 || strcmp(cmd,"hostfocus")==0) {
++      ScriptEntry *e=NewScriptEntry(&cap);e->hold_frames=1;e->wait_frames=pending_wait;pending_wait=0;
++      if(!strcmp(cmd,"hostfocus"))e->focus_ms=atoi(arg1)>0?atoi(arg1):1;
++      else { snprintf(e->host_option,sizeof(e->host_option),"%.31s",arg1);e->host_value=n; }
+     } else if (strcmp(cmd, "hostkey") == 0) {
+       char name[128] = {0};
+       if (sscanf(line, "%*s %127[^\r\n]", name) != 1) continue;
+@@ -746,6 +754,22 @@
+   }
+ }
+ 
++static Uint32 SDLCALL ScriptRegainFocus(void *userdata,SDL_TimerID timer,Uint32 interval) {
++  (void)timer;(void)interval;
++  SDL_Event e={0};e.type=SDL_EVENT_WINDOW_FOCUS_GAINED;e.window.windowID=(Uint32)(uintptr_t)userdata;
++  SDL_PushEvent(&e);return 0;
++}
++static void ScriptHostOption(const char *name,int value) {
++  if(!strcmp(name,"RunAhead"))AckmanMenuSetRunAhead(value);
++  else if(!strcmp(name,"Fullscreen"))AckmanMenuSetFullscreen(value!=0);
++  else if(!strcmp(name,"VSync"))AckmanMenuSetVSync(value!=0);
++  else if(!strcmp(name,"OutputMethod"))AckmanMenuSetOutputMethod(value);
++  else if(!strcmp(name,"Autosave"))g_config.autosave=value!=0;
++  else if(!strcmp(name,"PauseWhenInactive"))g_config.pause_when_inactive=value!=0;
++  else if(!strcmp(name,"NoSpriteLimits"))g_config.no_sprite_limits=value!=0;
++  else { fprintf(stderr,"script: unknown host option %s\n",name);return; }
++  fprintf(stderr,"[script-option] %s=%d\n",name,value);
++}
+ static uint32 TickScript(void) {
+   ApplyScriptForcePokes();
+ 
+@@ -784,6 +808,11 @@
+         if (e->poke_bytes && e->poke_count > 0)
+           AddScriptForcePoke(e->poke_addr, e->poke_bytes, e->poke_count);
+         return 0;
++      }
++      if(e->host_option[0]) { ScriptHostOption(e->host_option,e->host_value);return 0; }
++      if(e->focus_ms) {
++        SDL_Event event={0};event.type=SDL_EVENT_WINDOW_FOCUS_LOST;event.window.windowID=SDL_GetWindowID(g_window);
++        SDL_PushEvent(&event);SDL_AddTimer((Uint32)e->focus_ms,ScriptRegainFocus,(void *)(uintptr_t)SDL_GetWindowID(g_window));return 0;
+       }
+       if (e->host_key) {
+         SDL_Event key = {0}; key.type = SDL_KEYDOWN;
+@@ -1890,6 +1919,13 @@
+ static SDL_Texture *g_texture;
+ static SDL_Rect g_sdl_renderer_rect;
+ static SDL_Rect g_sdl_present_rect;
++// A renderer switch must retain the frozen game image behind the HUD.
++static uint8 *g_ackman_last_pixels,*g_ackman_locked_pixels;
++static int g_ackman_last_w,g_ackman_last_h,g_ackman_locked_pitch;
++static size_t g_ackman_last_capacity;
++static int g_ackman_output_method;
++static bool g_ackman_vsync;
++
+ 
+ static bool SdlRenderer_Init(SDL_Window *window) {
+   (void)window;
+@@ -1900,9 +1936,12 @@
+    * chosen by driver name, vsync is set separately) and removed
+    * SDL_RendererInfo entirely. snesrecomp_sdl_create_renderer() hides both. */
+   bool want_software = g_config.output_method == kOutputMethod_SDLSoftware;
+-  SDL_Renderer *renderer = snesrecomp_sdl_create_renderer(
+-      g_window, want_software,
+-      /*vsync=*/g_config.vsync && !PresentationDecoupled() && !g_config.disable_frame_delay);
++  // SDL3's OpenGL driver keeps the same ImGui/blur presenter as other outputs.
++  SDL_Renderer *renderer = g_config.output_method==kOutputMethod_OpenGL ?
++      SDL_CreateRenderer(g_window,"opengl") :
++      snesrecomp_sdl_create_renderer(g_window,want_software,false);
++  if(renderer) SDL_SetRenderVSync(renderer,g_config.vsync &&
++      !PresentationDecoupled() && !g_config.disable_frame_delay ? 1 : 0);
+   if (renderer == NULL) {
+     printf("Failed to create renderer: %s\n", SDL_GetError());
+     return false;
+@@ -1918,8 +1957,9 @@
+                                 g_snes_width, g_snes_height);
+   if (g_texture == NULL) {
+     printf("Failed to create texture: %s\n", SDL_GetError());
+-    return false;
+-  }
++    SDL_DestroyRenderer(g_renderer);g_renderer=NULL;return false;
++  }
++  g_ackman_output_method=g_config.output_method;g_ackman_vsync=g_config.vsync;
+   /* SNES frames are opaque RGB with a zero alpha byte; SDL3 would blend
+    * them away to the black clear colour. */
+   snesrecomp_sdl_set_texture_opaque(g_texture);
+@@ -1932,7 +1972,7 @@
+ static void SdlRenderer_Destroy(void) {
+   AckmanMenuRendererShutdown();
+   SDL_DestroyTexture(g_texture);
+-  SDL_DestroyRenderer(g_renderer);
++  SDL_DestroyRenderer(g_renderer);g_texture=NULL;g_renderer=NULL;
+ }
+ 
+ static void SdlRenderer_GetOutputSize(int *width, int *height) {
+@@ -1977,6 +2017,7 @@
+     *pixels = NULL;
+     return;
+   }
++  g_ackman_locked_pixels=*pixels;g_ackman_locked_pitch=*pitch;
+ }
+ 
+ static void SdlRenderer_Present(void) {
+@@ -1991,6 +2032,17 @@
+ }
+ 
+ static void SdlRenderer_EndDraw(void) {
++  size_t needed=(size_t)g_sdl_renderer_rect.w*g_sdl_renderer_rect.h*4;
++  if(needed>g_ackman_last_capacity) {
++    uint8 *grown=realloc(g_ackman_last_pixels,needed);
++    if(grown) { g_ackman_last_pixels=grown;g_ackman_last_capacity=needed; }
++  }
++  if(g_ackman_last_capacity>=needed && g_ackman_locked_pixels) {
++    g_ackman_last_w=g_sdl_renderer_rect.w;g_ackman_last_h=g_sdl_renderer_rect.h;
++    for(int y=0;y<g_ackman_last_h;y++)memcpy(g_ackman_last_pixels+(size_t)y*g_ackman_last_w*4,
++        g_ackman_locked_pixels+(size_t)y*g_ackman_locked_pitch,g_ackman_last_w*4);
++  }
++  g_ackman_locked_pixels=NULL;
+   SDL_UnlockTexture(g_texture);
+   SdlRenderer_Present();
+ }
+@@ -2002,6 +2054,42 @@
+   &SdlRenderer_BeginDraw,
+   &SdlRenderer_EndDraw,
+ };
++
++// Called only between completed presentations; no ImGui frame or texture is live.
++static void AckmanApplyMenuSettings(void) {
++  unsigned changes=AckmanMenuTakeSettings();
++  if(changes&ACK_SETTINGS_RUNAHEAD)snes_runahead_set_frames(g_config.run_ahead);
++  if(changes&ACK_SETTINGS_FULLSCREEN) {
++    if(!SDL_SetWindowFullscreen(g_window,g_config.fullscreen!=0))
++      fprintf(stderr,"[menu] Fullscreen change failed: %s\n",SDL_GetError());
++    g_config.fullscreen=(SDL_GetWindowFlags(g_window)&SDL_WINDOW_FULLSCREEN)!=0;
++    g_win_flags=SDL_GetWindowFlags(g_window);
++  }
++  if(changes&ACK_SETTINGS_OUTPUT) {
++    int old=g_ackman_output_method;
++    SdlRenderer_Destroy();
++    if(!SdlRenderer_Init(g_window)) {
++      fprintf(stderr,"[menu] Output change failed; restoring previous driver\n");
++      g_config.output_method=(uint8)old;
++      if(!SdlRenderer_Init(g_window))Die("Unable to restore renderer");
++    }
++    if(g_ackman_last_w && g_ackman_last_pixels) {
++      uint8 *pixels=NULL;int pitch=0;
++      SdlRenderer_BeginDraw(g_ackman_last_w,g_ackman_last_h,&pixels,&pitch);
++      if(pixels) {
++        for(int y=0;y<g_ackman_last_h;y++)memcpy(pixels+(size_t)y*pitch,
++            g_ackman_last_pixels+(size_t)y*g_ackman_last_w*4,g_ackman_last_w*4);
++        SDL_UnlockTexture(g_texture);g_ackman_locked_pixels=NULL;
++      }
++    }
++    fprintf(stderr,"[menu] OutputMethod=%d driver=%s\n",g_config.output_method,SDL_GetRendererName(g_renderer));
++  }
++  if((changes&ACK_SETTINGS_VSYNC) || g_ackman_vsync!=g_config.vsync) {
++    if(!SDL_SetRenderVSync(g_renderer,g_config.vsync && !PresentationDecoupled() && !g_config.disable_frame_delay?1:0))
++      fprintf(stderr,"[menu] VSync unsupported by this driver: %s\n",SDL_GetError());
++    g_ackman_vsync=g_config.vsync;
++  }
++}
+ 
+ void MkDir(const char *s) {
+ #if defined(_WIN32)
+@@ -2680,19 +2768,9 @@
+       g_current_window_scale * WindowBaseHeight();
+ 
+   RendererApply(RendererChoice());
+-#ifndef __ANDROID__
+-  if (g_config.output_method == kOutputMethod_OpenGL) {
+-    g_win_flags |= SDL_WINDOW_OPENGL;
+-    snesrecomp_opengl_set_vsync(g_config.vsync && !PresentationDecoupled() &&
+-                                !g_config.disable_frame_delay);
+-    OpenGLRenderer_Create(&g_renderer_funcs);
+-  } else
+-#endif
+-  {
+-    /* Android: always SDL_Renderer (GLES-backed); the desktop-GL presenter
+-     * is not compiled there. */
+-    g_renderer_funcs = kSdlRendererFuncs;
+-  }
++  // All Ackman outputs share SDL3 presentation so the HUD remains available.
++  // The OpenGL choice uses SDL3's actual OpenGL render driver.
++  g_renderer_funcs = kSdlRendererFuncs;
+ 
+   /* Load the SNES ROM. argv[0] is the resolved path. */
+   uint8 *kRom = NULL;
+@@ -3028,13 +3106,21 @@
+     }
+ 
+     ProfileEnd(kProfileEvents, event_profile_start);
+-    bool pause_audio = g_paused || AckmanMenuVisible();
++    AckmanApplyMenuSettings();
++    bool inactive=AckmanMenuInactive();
++    static bool previous_inactive;
++    if(inactive!=previous_inactive) {
++      fprintf(stderr,"[focus] inactive=%d frame=%u ticks=%llu\n",inactive,frameCtr,(unsigned long long)SDL_GetTicks());
++      previous_inactive=inactive;
++    }
++    bool pause_audio = g_paused || AckmanMenuVisible() || inactive;
+     if (pause_audio != audiopaused) {
+       audiopaused = pause_audio;
+       SetAudioPaused(audiopaused);
+-    }
+-
+-    if (AckmanMenuVisible()) {
++      fprintf(stderr,"[audio-pause] paused=%d frame=%u\n",audiopaused,frameCtr);
++    }
++
++    if (AckmanMenuVisible() || inactive) {
+       if(g_renderer) {
+         int dw,dh;SdlRenderer_GetOutputSize(&dw,&dh);
+         SnesDisplayViewport viewport;
+@@ -3435,6 +3521,7 @@
+   free(g_audiobuffer);
+ 
+   g_renderer_funcs.Destroy();
++  free(g_ackman_last_pixels);g_ackman_last_pixels=NULL;g_ackman_last_capacity=0;
+ 
+   AckmanMenuShutdown();
+   SDL_DestroyWindow(window);
+@@ -3481,10 +3568,7 @@
+   } else {
+     switch (j) {
+     case kKeys_Fullscreen:
+-      g_win_flags ^= SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP;
+-      SDL_SetWindowFullscreen(g_window, g_win_flags & SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP);
+-      g_cursor = !g_cursor;
+-      snesrecomp_sdl_show_cursor(g_cursor);
++      AckmanMenuSetFullscreen(!(SDL_GetWindowFlags(g_window)&SDL_WINDOW_FULLSCREEN));
+       break;
+     case kKeys_Reset:
+       AckmanMenuCommand(ACK_MENU_RESET);
+--- a/runner/src/snes_runahead.c
++++ b/runner/src/snes_runahead.c
+@@ -1,6 +1,7 @@
+ /* snes_runahead.c — see snes_runahead.h. */
+ 
+ #include "snes_runahead.h"
++#include "ackman_flow.h"
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -110,7 +111,7 @@
+     /* Frame 0 is the real one: real input, real audio. From here on this call
+      * owns the frame -- every path below returns 1, because the guest has
+      * advanced and the caller must not advance it again. */
+-    RtlRunFrame(inputs);
++    AckmanRunFrame(inputs);
+ 
+     /*
+      * Only now is the machine up far enough to ask. A game that keeps its

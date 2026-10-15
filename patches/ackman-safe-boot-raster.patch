@@ -1,0 +1,180 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -2,6 +2,7 @@
+ #include "ackman_devices.h"
+ #include "ackman_shader.h"
+ #include "ackman_capture.h"
++#include "ackman_boot.h"
+ #include "ackman_rumble.h"
+ #include "ackman_debug.h"
+ #include "ackman_flow.h"
+@@ -781,7 +782,7 @@
+   else if(!strcmp(name,"OutputMethod"))AckmanMenuSetOutputMethod(value);
+   else if(!strcmp(name,"Widescreen"))AckmanMenuSetWidescreen(value!=0);
+   else if(!strcmp(name,"WindowSize"))AckmanMenuSetWindowSize(value);
+-  else if(!strcmp(name,"WindowScale"))AckmanMenuSetInternalScale(value);
++  else if(!strcmp(name,"WindowScale") || !strcmp(name,"InternalResolution"))AckmanMenuSetInternalScale(value);
+   else if(!strcmp(name,"EnableAudio"))AckmanMenuSetAudio(value!=0);
+   else if(!strcmp(name,"Volume"))AckmanMenuSetVolume(value);
+   else if(!strcmp(name,"AudioFreq"))AckmanMenuSetSampleRate(value);
+@@ -981,11 +982,21 @@
+ void RtlDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
+   (void)render_flags;
+   if (!pixel_buffer) return;
+-  if (g_game->draw_frame &&
+-      g_game->draw_frame(pixel_buffer, pitch, g_my_pixels, g_snes_width,
+-                         g_snes_height, g_present_alpha))
+-    return;
+-  RtlWidescreenPresent(pixel_buffer, pitch, g_my_pixels, g_snes_width, g_snes_height);
++  int scale=AckmanVideoInternalScale();
++  /* Complete native PPU composition (including safe border hooks) before
++   * integer raster replication. No SDL target, filtering or interpolator. */
++  static uint32 native[kPpuBufWidth*240];
++  uint8 *dst=scale==1?pixel_buffer:(uint8 *)native;
++  size_t stride=scale==1?pitch:(size_t)g_snes_width*4;
++  if (!(g_game->draw_frame && g_game->draw_frame(dst,stride,g_my_pixels,
++         g_snes_width,g_snes_height,g_present_alpha)))
++    RtlWidescreenPresent(dst,stride,g_my_pixels,g_snes_width,g_snes_height);
++  if(scale>1)for(int y=0;y<g_snes_height;y++) {
++    uint32 *row=(uint32 *)(pixel_buffer+(size_t)y*scale*pitch);
++    const uint32 *src=native+(size_t)y*g_snes_width;
++    for(int x=0;x<g_snes_width;x++)for(int n=0;n<scale;n++)row[x*scale+n]=src[x];
++    for(int n=1;n<scale;n++)memcpy((uint8 *)row+(size_t)n*pitch,row,(size_t)g_snes_width*scale*4);
++  }
+ }
+ 
+ /* The OSD (FPS readout, turbo, save-slot toasts) composited into the frame.
+@@ -1056,7 +1067,7 @@
+ static void DrawPpuFrameWithPerf(void) {
+   double profile_start = ProfileStart();
+   PreparePpuFrame();
+-  const int render_scale = 1;
++  const int render_scale = AckmanVideoInternalScale();
+   uint8 *present_buffer = 0;
+   int present_pitch = 0;
+ 
+@@ -1918,7 +1929,7 @@
+                                     SnesDisplayAspect_Clamp(g_config.display_aspect),
+                                     g_config.ignore_aspect_ratio, false, &viewport);
+   if (g_game->compute_viewport)
+-    g_game->compute_viewport(width, height, output_width, output_height, &viewport);
++    g_game->compute_viewport(g_snes_width, g_snes_height, output_width, output_height, &viewport);
+   g_sdl_present_rect.x = viewport.x;
+   int actual_w,actual_h;SDL_GetRenderOutputSize(g_renderer,&actual_w,&actual_h);
+   g_sdl_present_rect.y = viewport.y + AckmanMenuHeight(actual_h);
+@@ -1935,30 +1946,19 @@
+   g_ackman_locked_pixels=*pixels;g_ackman_locked_pitch=*pitch;
+ }
+ 
+-// Keep PPU/raster buffers native; scale the completed image in an independent
+-// nearest-neighbour render target. WindowSize never controls this texture.
+-static SDL_Texture *AckmanInternalTexture(SDL_Rect *source) {
++static void SdlRenderer_EndDraw(void);
++static void SdlRenderer_Present(void) {
+   int scale=AckmanVideoInternalScale();
+-  if(scale==1){*source=g_sdl_renderer_rect;return g_texture;}
+-  int w=g_sdl_renderer_rect.w*scale,h=g_sdl_renderer_rect.h*scale;
+-  if(!g_internal_texture || w!=g_internal_width || h!=g_internal_height) {
+-    SDL_Texture *next=SDL_CreateTexture(g_renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,w,h);
+-    if(!next) {
+-      g_config.window_scale=1;*source=g_sdl_renderer_rect;return g_texture;
+-    }
+-    SDL_DestroyTexture(g_internal_texture);g_internal_texture=next;
+-    g_internal_width=w;g_internal_height=h;
+-    SDL_SetTextureBlendMode(next,SDL_BLENDMODE_NONE);SDL_SetTextureScaleMode(next,SDL_SCALEMODE_NEAREST);
+-    fprintf(stderr,"[menu] Internal resolution=%d texture=%dx%d\n",scale,w,h);
+-  }
+-  SDL_SetRenderTarget(g_renderer,g_internal_texture);
+-  SDL_RenderTexture(g_renderer,g_texture,NULL,NULL);
+-  SDL_SetRenderTarget(g_renderer,NULL);
+-  *source=(SDL_Rect){0,0,w,h};return g_internal_texture;
+-}
+-
+-static void SdlRenderer_Present(void) {
+-  SDL_Rect source;SDL_Texture *image=AckmanInternalTexture(&source);
++  if(g_ackman_last_pixels && g_ackman_last_w>0 &&
++     (g_sdl_renderer_rect.w!=g_snes_width*scale || g_sdl_renderer_rect.h!=g_snes_height*scale)) {
++    /* Re-rasterize the frozen PPU frame when a menu changes its multiplier.
++     * This updates native screenshots too, without advancing guest time. */
++    uint8 *pixels=NULL;int pitch=0;
++    SdlRenderer_BeginDraw(g_snes_width*scale,g_snes_height*scale,&pixels,&pitch);
++    if(pixels) {RtlDrawPpuFrame(pixels,pitch,g_ppu_render_flags);SdlRenderer_EndDraw();}
++    return;
++  }
++  SDL_Rect source=g_sdl_renderer_rect;SDL_Texture *image=g_texture;
+   SDL_SetRenderDrawColor(g_renderer,0,0,0,255);
+   SDL_RenderClear(g_renderer);
+   AckmanMenuDraw(g_renderer,false);
+@@ -1969,6 +1969,7 @@
+   AckmanMenuDraw(g_renderer,true);
+   AckmanCapturePresent(g_renderer,g_ackman_last_pixels,g_ackman_last_w,g_ackman_last_h);
+   SDL_RenderPresent(g_renderer);
++  AckmanBootPresent(AckmanMenuDialogActive());
+ }
+ 
+ static void SdlRenderer_EndDraw(void) {
+@@ -2740,7 +2741,7 @@
+   int window_height = custom_size ? g_config.window_height :
+       g_current_window_scale * WindowBaseHeight();
+ 
+-  RendererApply(RendererChoice());
++  /* Ackman uses OutputMethod, not the legacy Renderer override. */
+   // All Ackman outputs share SDL3 presentation so the HUD remains available.
+   // The OpenGL choice uses SDL3's actual OpenGL render driver.
+   g_renderer_funcs = kSdlRendererFuncs;
+@@ -2971,7 +2972,8 @@
+     }
+   }
+ 
+-  AckmanAutosave(false);
++  if(AckmanBootResume()) { bool saved=g_config.autosave;g_config.autosave=true;AckmanAutosave(false);g_config.autosave=saved; }
++  else AckmanAutosave(false);
+ 
+   if (script_file)
+     LoadScript(script_file);
+@@ -3586,6 +3588,7 @@
+         SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 159);
+         SDL_RenderFillRect(g_renderer, NULL);
+         SDL_RenderPresent(g_renderer);
++  AckmanBootPresent(AckmanMenuDialogActive());
+       }
+ #endif
+       break;
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -21,6 +21,7 @@
+ 
+ Config g_config;
+ static bool s_widescreen_seen;
++static bool s_internal_resolution_seen;
+ /* Set when a [KeyMap] line carried a binding this framework used to GENERATE
+  * as its default and has since changed; the line is read as the new default
+  * and WriteConfigFile rewrites it, so the file stops disagreeing with the
+@@ -486,7 +487,9 @@
+     } else if (StringEqualsNoCase(key, "Fullscreen")) {
+       g_config.fullscreen = (uint8)strtol(value, (char**)NULL, 10);
+       return true;
+-    } else if (StringEqualsNoCase(key, "WindowScale")) {
++    } else if ((StringEqualsNoCase(key, "InternalResolution") || StringEqualsNoCase(key, "WindowScale"))) {
++      if(StringEqualsNoCase(key,"WindowScale") && s_internal_resolution_seen)return true;
++      if(StringEqualsNoCase(key,"InternalResolution"))s_internal_resolution_seen=true;
+       long scale=strtol(value,NULL,10);
+       g_config.window_scale=scale<1?1:scale>10?10:scale;
+       return true;
+@@ -597,6 +600,7 @@
+   g_config.window_width = 1344; g_config.window_height = 672;
+   g_config.window_scale = 1; g_config.new_renderer = true;
+   s_widescreen_seen=false;g_config.ignore_aspect_ratio=true;
++  s_internal_resolution_seen=false;
+   g_config.enable_audio = true;
+   g_config.vsync = true;g_config.pause_when_inactive = true;g_config.controller_vibration = true;
+   g_config.volume = 100;
+@@ -715,7 +719,7 @@
+     snprintf(text[count], sizeof(text[count]), "%dx%d", g_config.window_width, g_config.window_height);
+   else snprintf(text[count], sizeof(text[count]), "Auto");
+   values[count] = (AckmanIniValue){"Graphics", "WindowSize", text[count]}; ++count;
+-  NUMBER("Graphics", "WindowScale", g_config.window_scale);
++  NUMBER("Graphics", "InternalResolution", g_config.window_scale);
+   NUMBER("Graphics", "Fullscreen", g_config.fullscreen);
+   NUMBER("Graphics", "NewRenderer", g_config.new_renderer);
+   NUMBER("Graphics", "Widescreen", g_config.ignore_aspect_ratio);

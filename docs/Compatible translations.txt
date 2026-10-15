@@ -1,0 +1,39 @@
+Go Go Ackman - native translation importer
+
+Registered conversions (stock Japanese ROM):
+
+English - Ackman Translations, version 1.0
+Input: Ackman1e.ips / Ackman.E.ips
+MD5: 0dd930e3738524cc4f8a3d83326616a9
+Size: 19872 bytes
+Output: mods/GoGoAckman_EN.snesmod
+
+Portuguese (Brazil) - E2P Traduções, Sonic_Spin, version 1.0 (2002)
+Input: Ackman.BR.ips
+MD5: 7cc729dde829946791d18a2b27e48da6
+Size: 9943 bytes
+Output: mods/GoGoAckman_PTBR.snesmod
+The importer applies the embedded English base in RAM before the Portuguese
+overlay. The resulting package is self-contained; no English package or IPS
+file is required to activate it. The original ROM is never overwritten.
+
+Both registered conversions have been verified against direct IPS application.
+PT-BR composition was tested in the actual core for 1000 frames. Full gameplay
+validation of this newly added translation is still pending.
+
+Required stock ROM (without an optional 512-byte copier header):
+SHA256: e8a33b6c8e15cf0aa60e9694471a51926fb97ad895d4714384c6abff28a33a1f
+
+Unknown IPS files use the bounded native C fallback automatically.
+Output: mods/GoGoAckman_Custom_<IPS MD5>.snesmod
+Normal and RLE records, including overlaps, are applied in file order.
+Malformed files, ROM resizing/trailing extensions and out-of-ROM writes are
+rejected without publishing a partial package. Headered IPS address offsets
+are not guessed; fallback offsets refer to the unheadered stock ROM.
+Conversion does not establish gameplay compatibility, especially for patches
+that change executable code in a recompilation. Generic metadata identifies
+the patch as unverified. No Python installation is required at runtime.
+
+Activate one translation package at a time and use Reboot to apply changes.
+Imported packages initially appear in the Available list and are not enabled
+automatically. Full author/version/description metadata is shown in the panel.

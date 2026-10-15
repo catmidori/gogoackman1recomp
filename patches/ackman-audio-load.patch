@@ -1,0 +1,108 @@
+diff --git a/runner/src/common_rtl.c b/runner/src/common_rtl.c
+--- a/runner/src/common_rtl.c
++++ b/runner/src/common_rtl.c
+@@ -2150,6 +2150,25 @@
+  * device at 32040 (or 32000, inside the servo's range). */
+ static double s_render_output_rate = RTL_AUDIO_NATIVE_RATE;
+ 
++void RtlAudioResetTimeline(void) {
++  /* Output samples are host history even though old saves serialize the ring.
++   * Do not reset BRR decode, pitch/envelopes or echo FIR: those are guest state. */
++  if (g_snes && g_snes->apu && g_snes->apu->dsp) {
++    Dsp *dsp = g_snes->apu->dsp;
++    memset(dsp->sampleBuffer, 0, sizeof(dsp->sampleBuffer));
++    dsp->sampleRead = dsp->sampleWrite = 0;
++  }
++  s_render_phase = 0.0;
++  s_render_hold_l = s_render_hold_r = 0;
++  s_render_starved = 1;
++  s_render_fade_pos = 0;
++  s_render_occ_ema = -1.0;
++  g_audio_fast_forward = false;
++  g_audio_recovery_frames = g_audio_recovery_remaining = 0;
++  g_audio_recovery_anchor_l = g_audio_recovery_anchor_r = 0;
++  g_audio_last_output_l = g_audio_last_output_r = 0;
++}
++
+ /* Tell the consumer what rate the host actually opened the device at.
+  *
+  * This is not optional bookkeeping: the retired fixed-534-block path did the
+diff --git a/runner/src/common_rtl.h b/runner/src/common_rtl.h
+--- a/runner/src/common_rtl.h
++++ b/runner/src/common_rtl.h
+@@ -298,6 +298,8 @@
+  * omitting it silently assumes 32040 and consumes far too fast at any other
+  * rate. Ignored for values outside 8000-192000. */
+ void RtlSetAudioOutputRate(int freq);
++/* Timeline jump only, under RtlApuLock. Preserve restored guest DSP state. */
++void RtlAudioResetTimeline(void);
+ /* Notify the shared audio runner of host fast-forward state. Guest-frame SPC
+  * synchronization is automatic inside RtlRunFrame; clients only supply the
+  * presentation policy needed to discard stale PCM after fast-forward. */
+diff --git a/runner/src/desktop/host_main.c b/runner/src/desktop/host_main.c
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -1758,7 +1758,9 @@
+ 
+ static void ResetAudioTimeline(void) {
+   RtlApuLock();
+-  g_audiobuffer_end = g_audiobuffer_cur;
++  if (g_audiobuffer)
++    memset(g_audiobuffer, 0, g_frames_per_block * g_audio_channels * sizeof(int16));
++  g_audiobuffer_end = g_audiobuffer_cur = g_audiobuffer;
+   g_audio_primed = false;
+   RtlApuUnlock();
+ #if SNESRECOMP_SDL3
+@@ -1889,6 +1891,38 @@
+ }
+ 
+ static bool g_dialog_audio_dirty;
++void AckmanHostStateLoadBegin(void) {
++  SetAudioPaused(true);
++#if SNESRECOMP_SDL3
++  /* Callback owns stream -> APU mutex. Take the same order and keep the
++   * stream locked across the entire restore, including failure rollback. */
++  if (g_audio_stream) SDL_LockAudioStream(g_audio_stream);
++  if (g_audio_stream_buffer)
++    memset(g_audio_stream_buffer, 0, g_audio_stream_buffer_size);
++#else
++  if (g_audio_device) SDL_LockAudioDevice(g_audio_device);
++#endif
++  ResetAudioTimeline();
++  RtlApuLock();
++  RtlAudioResetTimeline();
++  RtlApuUnlock();
++}
++void AckmanHostStateLoadEnd(void) {
++  /* Loaded saves can bring their old output ring back. Discard it only after
++   * all guest channels/ports/clocks and Ackman music routing are reconciled. */
++  ResetAudioTimeline();
++  RtlApuLock();
++  RtlAudioResetTimeline();
++  RtlApuUnlock();
++#if SNESRECOMP_SDL3
++  if (g_audio_stream) SDL_UnlockAudioStream(g_audio_stream);
++#else
++  if (g_audio_device) SDL_UnlockAudioDevice(g_audio_device);
++#endif
++  g_dialog_audio_dirty=true;
++  snesrecomp_desktop_request_clock_reset();
++  host_report_breadcrumb("state audio flushed: host buffers, DSP output ring and resampler reset");
++}
+ void AckmanHostDialogPause(void) {
+   SetAudioPaused(true);
+   g_dialog_audio_dirty=true;
+diff --git a/runner/src/desktop/host_main.h b/runner/src/desktop/host_main.h
+--- a/runner/src/desktop/host_main.h
++++ b/runner/src/desktop/host_main.h
+@@ -163,6 +163,10 @@
+ /* Ask the host to reset its pacing clock at the next opportunity (a title
+  * that just changed its presentation settings). */
+ void snesrecomp_desktop_request_clock_reset(void);
++/* File-load transaction: block callbacks before guest restore, release after
++ * reconciliation. Playback resumes through the normal menu/focus pause gate. */
++void AckmanHostStateLoadBegin(void);
++void AckmanHostStateLoadEnd(void);
+ 
+ #ifdef __cplusplus
+ }

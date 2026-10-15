@@ -1,0 +1,49 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -1015,23 +1015,17 @@
+   }
+ }
+ 
+-/* The OSD (FPS readout, turbo, save-slot toasts) composited into the frame.
+- * The framework rasterizes it for a ~3x window; the frame is 1x, so it lands
+- * at half size here and the SDL/GL scale brings it back. Window-space chrome
+- * is not available through the RendererFuncs contract, which is what the GL
+- * presenter speaks. */
+-static void ComposeOsd(uint8 *dst, int pitch, int dst_w, int dst_h, int scale_div) {
++/* OSD composition follows the actual framebuffer raster scale. Keep the
++ * native overlay size/margins proportional in SDL, software and OpenGL. */
++static void ComposeOsd(uint8 *dst, int pitch, int dst_w, int dst_h, int scale_div, int render_scale) {
+   const uint32_t *px = NULL;
+   int w = 0, h = 0;
+   if (snes_osd_image(&px, &w, &h) && px && w > 0 && h > 0)
+-    snes_ovl_blit_panel_rect(dst, pitch, dst_w, dst_h, px, w, h,
+-                             4 / scale_div, 4 / scale_div, w / scale_div, h / scale_div);
++    AckmanVideoBlitOsd(dst, pitch, dst_w, dst_h, px, w, h, scale_div, render_scale, false);
+   /* The volume bar sits at the right edge, vertically centred, while the
+    * volume was just changed. */
+   if (snes_osd_volume_image(&px, &w, &h) && px && w > 0 && h > 0) {
+-    const int bw = w / scale_div, bh = h / scale_div;
+-    snes_ovl_blit_panel_rect(dst, pitch, dst_w, dst_h, px, w, h,
+-                             dst_w - bw - 4 / scale_div, (dst_h - bh) / 2, bw, bh);
++    AckmanVideoBlitOsd(dst, pitch, dst_w, dst_h, px, w, h, scale_div, render_scale, true);
+   }
+   snes_osd_present_done();
+ }
+@@ -1176,7 +1170,7 @@
+     }
+   }
+   ComposeOsd(pixel_buffer, pitch, g_snes_width * render_scale,
+-             g_snes_height * render_scale, 2);
++             g_snes_height * render_scale, 2, render_scale);
+   /* SNESRECOMP_SCREENSHOT=<path.ppm> [SNESRECOMP_SCREENSHOT_FRAME=<n>]: write
+    * the frame presented at simulated frame n (default: the first) as a PPM,
+    * OSD included: it is what the player sees, not the bare field.
+@@ -1593,7 +1587,7 @@
+                                panel, pw, ph, 0, 0, draw_w, draw_h);
+     }
+   }
+-  ComposeOsd(pixel_buffer, pitch, draw_w, draw_h, draw_w >= 512 ? 1 : 2);
++  ComposeOsd(pixel_buffer, pitch, draw_w, draw_h, draw_w >= 512 ? 1 : 2, 1);
+   /* Optional save-state browser diagnostic capture. */
+   {
+     static int dumped_menu = 0;

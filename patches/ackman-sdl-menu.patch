@@ -1,0 +1,69 @@
+diff --git a/runner/src/desktop/host_main.c b/runner/src/desktop/host_main.c
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -232,7 +232,7 @@
+   return NULL;
+ }
+ 
+-static uint32 g_win_flags = SDL_WINDOW_RESIZABLE;
++static uint32 g_win_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+ static SDL_Window *g_window;
+ 
+ static uint8 g_paused, g_turbo, g_cursor = true;
+@@ -1911,6 +1911,7 @@
+ }
+ 
+ static void SdlRenderer_Destroy(void) {
++  AckmanMenuRendererShutdown();
+   SDL_DestroyTexture(g_texture);
+   SDL_DestroyRenderer(g_renderer);
+ }
+@@ -1920,6 +1921,7 @@
+     *width = 0;
+     *height = 0;
+   }
++  *height -= AckmanMenuHeight(*height);
+ }
+ 
+ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pitch) {
+@@ -1944,7 +1946,8 @@
+   if (g_game->compute_viewport)
+     g_game->compute_viewport(width, height, output_width, output_height, &viewport);
+   g_sdl_present_rect.x = viewport.x;
+-  g_sdl_present_rect.y = viewport.y;
++  int actual_w,actual_h;SDL_GetRenderOutputSize(g_renderer,&actual_w,&actual_h);
++  g_sdl_present_rect.y = viewport.y + AckmanMenuHeight(actual_h);
+   g_sdl_present_rect.w = viewport.width;
+   g_sdl_present_rect.h = viewport.height;
+   g_sdl_renderer_rect.w = width;
+@@ -1957,13 +1960,20 @@
+   }
+ }
+ 
+-static void SdlRenderer_EndDraw(void) {
+-  SDL_UnlockTexture(g_texture);
++static void SdlRenderer_Present(void) {
++  SDL_SetRenderDrawColor(g_renderer,0,0,0,255);
+   SDL_RenderClear(g_renderer);
++  AckmanMenuDraw(g_renderer,false);
+   /* SDL3's SDL_RenderTexture takes SDL_FRect, not SDL_Rect. */
+   snesrecomp_sdl_render_texture(g_renderer, g_texture, &g_sdl_renderer_rect,
+                                 &g_sdl_present_rect);
++  AckmanMenuDraw(g_renderer,true);
+   SDL_RenderPresent(g_renderer);
++}
++
++static void SdlRenderer_EndDraw(void) {
++  SDL_UnlockTexture(g_texture);
++  SdlRenderer_Present();
+ }
+ 
+ static const struct RendererFuncs kSdlRendererFuncs = {
+@@ -3011,6 +3021,7 @@
+     }
+ 
+     if (g_paused && !g_savestate_menu_hotkey && !g_rewind_hotkey) {
++      if(g_renderer) SdlRenderer_Present();
+       snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
+       SDL_Delay(16);
+       continue;

@@ -1,0 +1,44 @@
+diff --git a/runner/src/common_rtl.c b/runner/src/common_rtl.c
+index 176a93f..6e08ba0 100644
+--- a/runner/src/common_rtl.c
++++ b/runner/src/common_rtl.c
+@@ -885,7 +885,7 @@ bool RtlSaveSnapshot(const char *filename) {
+   return !fs.error && close_ok;
+ }
+ 
+-bool RtlLoadSnapshot(const char *filename) {
++bool AckmanCoreLoadState(const char *filename) {
+   FILE *f = fopen(filename, "rb");
+   if (!f)
+     return false;
+@@ -984,12 +984,13 @@ bool RtlLoadSnapshotFromMemory(const void *data, size_t size) {
+  */
+ 
+ #define RTL_RB_RESIDUE_MAGIC 0x53524252u /* 'RBRS' */
+-#define RTL_RB_RESIDUE_VERSION 6u
++#define RTL_RB_RESIDUE_VERSION 7u
+ 
+ typedef struct RtlRollbackResidue {
+   uint32 magic;
+   uint32 version;
+   CpuState cpu;              /* ram pointer is preserved, not restored */
++  RtlApuFrameClock apu_frame_clock; /* extended frame timing must rewind too */
+   ApuPortSched apu_port;
+   uint64_t beam_master_last;
+   uint64_t apu_pace_cycles_estimate;
+@@ -1134,6 +1135,7 @@ static void rtl_rb_residue_capture(RtlRollbackResidue *r) {
+   r->magic = RTL_RB_RESIDUE_MAGIC;
+   r->version = RTL_RB_RESIDUE_VERSION;
+   r->cpu = g_cpu;
++  r->apu_frame_clock = g_apu_frame_clock;
+   apu_port_sched_save(g_snes->apu, &r->apu_port);
+   r->beam_master_last = g_snes->beamMasterLast;
+   r->frame_counter = snes_frame_counter;
+@@ -1154,6 +1156,7 @@ static void rtl_rb_residue_capture(RtlRollbackResidue *r) {
+ static void rtl_rb_residue_apply(const RtlRollbackResidue *r) {
+   uint8 *ram_ptr = g_cpu.ram;
+   g_cpu = r->cpu;
++  g_apu_frame_clock = r->apu_frame_clock;
+   g_cpu.ram = ram_ptr; /* host pointer, not simulation state */
+   apu_port_sched_restore(g_snes->apu, &r->apu_port);
+   g_snes->beamMasterLast = r->beam_master_last;

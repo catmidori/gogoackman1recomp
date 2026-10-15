@@ -1,0 +1,25 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -1,3 +1,4 @@
+ #include "ackman_menu.h"
++#include "ackman_debug.h"
+ /*
+  * host_main.c — the framework's desktop host. See host_main.h.
+@@ -2999,7 +3000,6 @@
+   }
+ 
+-  if (g_config.autosave)
+-    HandleCommand(kKeys_Load + 0, true);
++  AckmanAutosave(false);
+ 
+   if (script_file)
+     LoadScript(script_file);
+@@ -3496,7 +3496,6 @@
+   }
+ 
+-  if (g_config.autosave)
+-    HandleCommand(kKeys_Save + 0, true);
++  AckmanAutosave(true);
+   /* A volume set with the keys survives the session, like the launcher's. */
+   if (g_volume_changed)
+     WriteConfigFile(g_active_config_file);

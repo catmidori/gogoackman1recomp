@@ -1,0 +1,1182 @@
+diff --git a/runner/src/desktop/config.h b/runner/src/desktop/config.h
+--- a/runner/src/desktop/config.h
++++ b/runner/src/desktop/config.h
+@@ -109,6 +109,7 @@
+   bool frame_blend;
+   bool vsync;
+   int run_ahead;
++  int rewind_depth,rewind_interval;
+   char renderer[32];
+   /* [Sound] Volume, 0..100 (default 100): the mixer level the VolumeUp /
+    * VolumeDown keys move in 5% steps and the launcher's slider edits. */
+diff --git a/runner/src/desktop/host_main.c b/runner/src/desktop/host_main.c
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -1,5 +1,6 @@
+ #include "ackman_menu.h"
+ #include "ackman_debug.h"
++#include "ackman_flow.h"
+ /*
+  * host_main.c — the framework's desktop host. See host_main.h.
+  *
+@@ -345,6 +346,7 @@
+ /* Set by the hotkeys; consumed once in the frame loop. */
+ static int g_savestate_menu_hotkey;
+ static int g_rewind_hotkey;
++static bool g_rewind_audio_locked;
+ static uint64_t g_state_generation;
+ 
+ /* The last field actually presented, kept so an overlay can freeze the guest
+@@ -528,6 +530,7 @@
+   SDL_Keycode host_key;
+   char host_option[32];
+   int host_value,focus_ms; // optional unmodified SDL key tap, through the normal event pump
++  int host_hold_ms,host_pad_plus_one;
+   uint32 poke_addr; // script-only WRAM write address
+   uint8 *poke_bytes;
+   int poke_count;
+@@ -687,6 +690,11 @@
+       ScriptEntry *e=NewScriptEntry(&cap);e->hold_frames=1;e->wait_frames=pending_wait;pending_wait=0;
+       if(!strcmp(cmd,"hostfocus"))e->focus_ms=atoi(arg1)>0?atoi(arg1):1;
+       else { snprintf(e->host_option,sizeof(e->host_option),"%.31s",arg1);e->host_value=n; }
++    } else if(!strcmp(cmd,"hosthold") || !strcmp(cmd,"hostpadhold")) {
++      ScriptEntry *e=NewScriptEntry(&cap);e->hold_frames=1;e->wait_frames=pending_wait;pending_wait=0;
++      e->host_hold_ms=n>0?n:100;
++      if(!strcmp(cmd,"hosthold"))e->host_key=SDL_GetKeyFromName(arg1);
++      else e->host_pad_plus_one=(int)SDL_GetGamepadButtonFromString(arg1)+1;
+     } else if (strcmp(cmd, "hostkey") == 0) {
+       char name[128] = {0};
+       if (sscanf(line, "%*s %127[^\r\n]", name) != 1) continue;
+@@ -763,6 +771,7 @@
+ }
+ static void ScriptHostOption(const char *name,int value) {
+   if(!strcmp(name,"RunAhead"))AckmanMenuSetRunAhead(value);
++  else if(!strcmp(name,"RewindInterval"))AckmanMenuSetRewindInterval(value);
+   else if(!strcmp(name,"Fullscreen"))AckmanMenuSetFullscreen(value!=0);
+   else if(!strcmp(name,"VSync"))AckmanMenuSetVSync(value!=0);
+   else if(!strcmp(name,"OutputMethod"))AckmanMenuSetOutputMethod(value);
+@@ -779,6 +788,10 @@
+   else if(!strcmp(name,"Reboot"))AckmanMenuCommand(ACK_MENU_RESET);
+   else { fprintf(stderr,"script: unknown host option %s\n",name);return; }
+   fprintf(stderr,"[script-option] %s=%d\n",name,value);
++}
++static SDL_Event script_hold_release;
++static Uint32 SDLCALL ScriptReleaseHold(void *unused,SDL_TimerID timer,Uint32 interval) {
++  (void)unused;(void)timer;(void)interval;SDL_PushEvent(&script_hold_release);return 0;
+ }
+ static uint32 TickScript(void) {
+   ApplyScriptForcePokes();
+@@ -828,7 +841,15 @@
+         SDL_Event key = {0}; key.type = SDL_KEYDOWN;
+         SNESRECOMP_SDL_EVENT_KEY(key) = e->host_key;
+         SDL_PushEvent(&key);
+-        key.type = SDL_KEYUP; SDL_PushEvent(&key);
++        key.type = SDL_KEYUP;
++        if(e->host_hold_ms){script_hold_release=key;if(!SDL_AddTimer((Uint32)e->host_hold_ms,ScriptReleaseHold,NULL))SDL_PushEvent(&key);}
++        else SDL_PushEvent(&key);
++        return 0;
++      }
++      if(e->host_pad_plus_one) {
++        SDL_Event pad={0};pad.type=SDL_EVENT_GAMEPAD_BUTTON_DOWN;pad.gbutton.button=(Uint8)(e->host_pad_plus_one-1);pad.gbutton.down=true;SDL_PushEvent(&pad);
++        pad.type=SDL_EVENT_GAMEPAD_BUTTON_UP;pad.gbutton.down=false;script_hold_release=pad;
++        if(!SDL_AddTimer((Uint32)e->host_hold_ms,ScriptReleaseHold,NULL))SDL_PushEvent(&pad);
+         return 0;
+       }
+       return e->mask;
+@@ -910,6 +931,9 @@
+  * speculative frame and before rewinding, so the picture the player sees is
+  * the speculated one rather than the frame redrawn from the rewound state.
+  * The frame number is the one this iteration is about to become. */
++static uint8_t rewind_real_raster[2048];
++static uint32_t rewind_real_flow[5];
++static bool rewind_real_ready;
+ static void RunaheadCapture(void *context, int for_picture) {
+   const uint32 *frame_counter = (const uint32 *)context;
+   if (for_picture) {
+@@ -921,16 +945,28 @@
+    * capture still belongs to the speculated frame that follows. */
+   if (g_rtl_game_info && g_rtl_game_info->draw_ppu_frame)
+     g_rtl_game_info->draw_ppu_frame();
++  size_t journal_size=ppu_rasterSnapshotSize();
++  rewind_real_ready=journal_size<=sizeof(rewind_real_raster) && ppu_rasterSaveSnapshot(rewind_real_raster,journal_size);
++  AckmanFlowSaveRewind(rewind_real_flow);
+ }
+ 
+ /* Snapshots and their thumbnails share the same completed raster boundary. */
+-static void NoteStateFrame(void) {
++static void NoteStateFrame(bool runahead) {
+   if (g_ppu && g_ppu->renderBuffer) {
+     int width = g_game->native_widescreen ? g_snes_width : 256;
+     snes_savestate_menu_note_frame((const uint32_t *)g_ppu->renderBuffer, width, g_snes_height);
+-    snes_rewind_note_framebuffer((const uint32_t *)g_ppu->renderBuffer, width, g_snes_height);
+-  }
+-  snes_rewind_note_frame();
++  }
++  if(runahead) {
++    /* The guest is restored to the real frame, but the external raster journal
++     * still describes the predicted picture. Record real history only. */
++    if(rewind_real_ready) {
++      uint8_t predicted[2048];uint32_t predicted_flow[5];size_t n=ppu_rasterSnapshotSize();
++      ppu_rasterSaveSnapshot(predicted,n);AckmanFlowSaveRewind(predicted_flow);
++      ppu_rasterLoadSnapshot(rewind_real_raster,n);AckmanFlowLoadRewind(rewind_real_flow);
++      snes_rewind_note_frame();
++      ppu_rasterLoadSnapshot(predicted,n);AckmanFlowLoadRewind(predicted_flow);
++    }
++  } else snes_rewind_note_frame();
+ }
+ 
+ void RtlDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
+@@ -1351,79 +1387,6 @@
+   }
+ }
+ 
+-/* Rewind's controller gesture, config.ini [Controller] RewindGesture (default
+- * Select+R3; "none" disables). Pad buttons joined with '+': the SNES names
+- * (b y select start up down left right a x l r) come from seat 0's input
+- * word, and l3/r3 -- which the SNES pad has no bit for -- from the gamepad's
+- * own held-button set. A gesture of fewer than two buttons is refused: one
+- * ordinary button pressed in the middle of a fight is not a gesture, which
+- * is how a per-game host once opened rewind on a boost dash. */
+-static uint16 g_rewind_gesture_pad;      /* SNES_PAD_* bits, all required */
+-static uint32 g_rewind_gesture_raw;      /* kGamepadBtn_* bits, all required */
+-static bool g_rewind_gesture_ok;
+-static void RewindGestureConfigure(void) {
+-  static const struct { const char *name; uint16 bit; } kNames[] = {
+-    { "b", SNES_PAD_B }, { "y", SNES_PAD_Y }, { "select", SNES_PAD_SELECT },
+-    { "back", SNES_PAD_SELECT }, { "start", SNES_PAD_START },
+-    { "up", SNES_PAD_UP }, { "down", SNES_PAD_DOWN }, { "left", SNES_PAD_LEFT },
+-    { "right", SNES_PAD_RIGHT }, { "a", SNES_PAD_A }, { "x", SNES_PAD_X },
+-    { "l", SNES_PAD_L }, { "r", SNES_PAD_R },
+-  };
+-  char spec[sizeof(g_config.rewind_gesture)];
+-  int bad = 0, held = 0;
+-  g_rewind_gesture_pad = 0;
+-  g_rewind_gesture_raw = 0;
+-  g_rewind_gesture_ok = false;
+-  snprintf(spec, sizeof(spec), "%s", g_config.rewind_gesture[0] ? g_config.rewind_gesture : "Select+R3");
+-  for (char *c = spec; *c; c++)
+-    if (*c >= 'A' && *c <= 'Z') *c = (char)(*c - 'A' + 'a');
+-  if (!strcmp(spec, "none")) {
+-    fprintf(stderr, "[rewind] pad gesture disabled ([Controller] RewindGesture = none)\n");
+-    return;
+-  }
+-  for (const char *p = spec; *p; ) {
+-    char tok[24];
+-    size_t n = 0;
+-    while (*p == ' ' || *p == '+') ++p;
+-    while (*p && *p != '+' && *p != ' ' && n + 1 < sizeof(tok))
+-      tok[n++] = *p++;
+-    tok[n] = '\0';
+-    while (*p && *p != '+') ++p;
+-    if (!tok[0]) continue;
+-    if (!strcmp(tok, "r3")) { g_rewind_gesture_raw |= 1u << kGamepadBtn_R3; held++; continue; }
+-    if (!strcmp(tok, "l3")) { g_rewind_gesture_raw |= 1u << kGamepadBtn_L3; held++; continue; }
+-    int hit = 0;
+-    for (size_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
+-      if (strcmp(tok, kNames[i].name)) continue;
+-      g_rewind_gesture_pad |= kNames[i].bit;
+-      held++;
+-      hit = 1;
+-      break;
+-    }
+-    if (!hit) {
+-      fprintf(stderr, "[rewind] unknown button \"%s\" in [Controller] RewindGesture\n", tok);
+-      bad = 1;
+-    }
+-  }
+-  if (bad || held < 2) {
+-    fprintf(stderr, "[rewind] \"%s\" is not a usable gesture; using Select+R3\n", spec);
+-    g_rewind_gesture_pad = SNES_PAD_SELECT;
+-    g_rewind_gesture_raw = 1u << kGamepadBtn_R3;
+-  }
+-  g_rewind_gesture_ok = true;
+-}
+-/* Edge-triggered: true on the frame the whole gesture becomes held. */
+-static bool RewindGesturePressed(void) {
+-  static bool was_held;
+-  if (!g_rewind_gesture_ok) return false;
+-  const uint32 pad = OverlayNavInputs();
+-  const uint32 raw = g_gamepad[0].modifiers;
+-  const bool held = (pad & g_rewind_gesture_pad) == g_rewind_gesture_pad &&
+-                    (raw & g_rewind_gesture_raw) == g_rewind_gesture_raw;
+-  const bool pressed = held && !was_held;
+-  was_held = held;
+-  return pressed;
+-}
+ 
+ /* Pad self-test (SNESRECOMP_OVERLAY_SELFTEST_PAD=<frame>, off by default).
+  *
+@@ -1544,23 +1507,14 @@
+  * instead halved the panel and made it noticeably coarser than the same
+  * overlay looks in other ports.
+  *
+- * Placement is per-overlay, because the two modules draw for different
+- * shapes: the save-state browser is an opaque full-rect panel, the rewind
+- * filmstrip belongs across the bottom third of the frame, annotating the
+- * moment it describes. */
++ */
+ static void PresentFrozenWithOverlay(void) {
+   const uint32_t *panel = NULL;
+   int pw = 0, ph = 0;
+   int is_menu = snes_savestate_menu_overlay_image(&panel, &pw, &ph) && panel;
+-  if (!is_menu && !(snes_rewind_overlay_image(&panel, &pw, &ph) && panel))
+-    panel = NULL;
+-
+-  /* The draw buffer is the FROZEN FRAME at twice its size, whichever panel
+-   * is up. It used to be the panel's own size, which is right for the
+-   * browser (512x448, exactly twice the field) and wrong for the rewind
+-   * filmstrip, whose image is a 512x176 strip: the whole frozen game was
+-   * squashed into a strip-high buffer and presented letterboxed in the
+-   * middle of the window. */
++  if (!is_menu) panel = NULL;
++
++  /* Upscale the frozen browser background without running guest code. */
+   const int base_w = g_frozen_w > 0 ? g_frozen_w : g_snes_width;
+   const int base_h = g_frozen_h > 0 ? g_frozen_h : g_snes_height;
+   const int draw_w = base_w * 2;
+@@ -1585,25 +1539,14 @@
+     if (is_menu) {
+       snes_ovl_blit_panel_rect(pixel_buffer, pitch, draw_w, draw_h,
+                                panel, pw, ph, 0, 0, draw_w, draw_h);
+-    } else {
+-      /* Full width, anchored to the bottom, at the strip's own height when
+-       * it fits (1:1 on the stock field, so its text stays crisp), else
+-       * scaled to the bottom third the way the other ports place it. */
+-      const int strip_h = ph > 0 && ph <= draw_h / 2 ? ph : draw_h / 3;
+-      snes_ovl_blit_panel_rect(pixel_buffer, pitch, draw_w, draw_h,
+-                               panel, pw, ph,
+-                               0, draw_h - strip_h, draw_w, strip_h);
+     }
+   }
+   ComposeOsd(pixel_buffer, pitch, draw_w, draw_h, draw_w >= 512 ? 1 : 2);
+-  /* SNESRECOMP_OVERLAY_DUMP=<path> (browser) / SNESRECOMP_REWIND_DUMP=<path>
+-   * (filmstrip): write the composited overlay frame as a PPM. The overlays can only be driven by a human, so this is the only way
+-   * to check that a panel actually reaches the screen rather than inferring
+-   * it from the module reporting itself open. */
++  /* Optional save-state browser diagnostic capture. */
+   {
+-    static int dumped_menu = 0, dumped_rewind = 0;
+-    const char *dump = is_menu ? HostGetenv("OVERLAY_DUMP") : HostGetenv("REWIND_DUMP");
+-    int *dumped = is_menu ? &dumped_menu : &dumped_rewind;
++    static int dumped_menu = 0;
++    const char *dump = HostGetenv("OVERLAY_DUMP");
++    int *dumped = &dumped_menu;
+     if (dump && !*dumped && panel) {
+       FILE *f = fopen(dump, "wb");
+       if (f) {
+@@ -1618,7 +1561,7 @@
+         fclose(f);
+         *dumped = 1;
+         fprintf(stderr, "[overlay_dump] wrote %s (%dx%d, %s)\n", dump, draw_w, draw_h,
+-                is_menu ? "save-state browser" : "rewind filmstrip");
++                "save-state browser");
+       }
+     }
+   }
+@@ -1662,78 +1605,6 @@
+                          frames);
+ }
+ 
+-static void RewindKeyDown(int key, int repeat) {
+-  (void)repeat;
+-  switch (key) {
+-  case SDLK_LEFT:   snes_rewind_step(-1); break;
+-  case SDLK_RIGHT:  snes_rewind_step(+1); break;
+-  case SDLK_RETURN:
+-  case SDLK_SPACE:  snes_rewind_commit(); break;
+-  case SDLK_ESCAPE: snes_rewind_close();  break;
+-  default: break;
+-  }
+-}
+-
+-/* Rewind's modal pump. It needs its own: snes_rewind exposes step/commit/close
+- * rather than the browser's handle_key/poll_nav. Controls match the other
+- * ports: Left/Right scrub (hold to keep scrubbing), Enter or Space commits,
+- * Escape cancels, and the pad mirrors them. */
+-static void RunRewindLoop(bool *running) {
+-  uint32 prev_pad = 0;
+-  uint32 held_dir = 0;
+-  uint32 held_since = 0, last_repeat = 0;
+-  unsigned frames = 0;
+-  host_report_breadcrumb("rewind filmstrip OPEN - guest frozen until it closes "
+-                         "(pad B, or Escape; Left/Right scrub, A or Enter commits)");
+-  g_overlay_modal = true;
+-  SetAudioPaused(true);
+-  while (snes_rewind_is_open() && *running) {
+-    PumpOverlayEvents(running, &RewindKeyDown);
+-    if (!*running)
+-      snes_rewind_close();
+-    OverlaySelftestPadTick(frames);
+-    {
+-      /* Edge-triggered, with a hold-to-repeat: holding Left must not sprint
+-       * through the whole ring in a single pass of this loop. */
+-      const uint32 now = SDL_GetTicks();
+-      const uint32 pad = OverlayNavInputs();
+-      const uint32 pressed = pad & ~prev_pad;
+-      const uint32 dir = pad & (SNES_PAD_LEFT | SNES_PAD_RIGHT);
+-      if (pressed & SNES_PAD_LEFT)  snes_rewind_step(-1);
+-      if (pressed & SNES_PAD_RIGHT) snes_rewind_step(+1);
+-      if (pressed & SNES_PAD_A)     snes_rewind_commit();
+-      if (pressed & SNES_PAD_B)     snes_rewind_close();
+-      if (dir && dir != (SNES_PAD_LEFT | SNES_PAD_RIGHT)) {
+-        if (dir != held_dir) {
+-          held_dir = dir;
+-          held_since = now;
+-          last_repeat = now;
+-        } else if (now - held_since >= SNES_OVL_REPEAT_DELAY &&
+-                   now - last_repeat >= SNES_OVL_REPEAT_RATE) {
+-          snes_rewind_step((dir & SNES_PAD_LEFT) ? -1 : +1);
+-          last_repeat = now;
+-        }
+-      } else {
+-        held_dir = 0;
+-      }
+-      prev_pad = pad;
+-    }
+-    PresentFrozenWithOverlay();
+-    SDL_Delay(8);
+-    frames++;
+-  }
+-  g_overlay_modal = false;
+-  ResetAudioTimeline();
+-  SetAudioPaused(g_paused);
+-  g_state_generation = RtlStateGeneration(); /* keep the trimmed rewind history */
+-  OverlayNoteClosed();
+-  host_report_breadcrumb("rewind filmstrip CLOSED after %u pumps - guest resuming",
+-                         frames);
+-  GameReset();
+-}
+-
+-/* ── Audio ────────────────────────────────────────────────────────────────── */
+-
+ static SDL_mutex *g_audio_mutex;
+ static uint8 *g_audiobuffer, *g_audiobuffer_cur, *g_audiobuffer_end;
+ static int g_frames_per_block;
+@@ -2129,6 +2000,7 @@
+   if(changes&ACK_SETTINGS_AUDIO)AckmanApplyAudioSettings();
+   if(changes&ACK_SETTINGS_VOLUME)ApplyVolume();
+   if(changes&ACK_SETTINGS_RUNAHEAD)snes_runahead_set_frames(g_config.run_ahead);
++  if(changes&ACK_SETTINGS_REWIND)snes_rewind_configure();
+   if(changes&ACK_SETTINGS_FULLSCREEN) {
+     if(!SDL_SetWindowFullscreen(g_window,g_config.fullscreen!=0))
+       fprintf(stderr,"[menu] Fullscreen change failed: %s\n",SDL_GetError());
+@@ -2477,7 +2349,6 @@
+       g_config.output_method, g_config.new_renderer, g_config.window_scale,
+       g_config.fullscreen, g_config.enable_audio, g_config.audio_freq,
+       g_config.audio_samples);
+-  RewindGestureConfigure();
+ 
+ #if SNESRECOMP_ENABLE_MODS
+   /* Before the launcher, which needs the provider to show the Mods page.
+@@ -3119,6 +2990,7 @@
+ 
+   while (running) {
+     if (g_state_generation != RtlStateGeneration()) {
++      if(g_rewind_audio_locked){snes_rewind_commit();AckmanHostStateLoadEnd();g_rewind_audio_locked=false;}
+       ResetAudioTimeline();
+       snes_rewind_shutdown();
+       snes_rewind_configure();
+@@ -3192,7 +3064,13 @@
+       previous_dialog=dialog_active;
+     }
+     bool wrapper_paused=AckmanMenuVisible() || inactive || dialog_active;
+-    bool pause_audio = g_paused || wrapper_paused;
++    if(g_rewind_audio_locked && (!g_rewind_hotkey || wrapper_paused || !snes_rewind_is_open())) {
++      snes_rewind_commit();AckmanHostStateLoadEnd();g_rewind_audio_locked=false;
++      g_state_generation=RtlStateGeneration();
++      host_report_breadcrumb("hold rewind released: gameplay resumed at restored state");
++    }
++    if(wrapper_paused)g_rewind_hotkey=0;
++    bool pause_audio = g_paused || wrapper_paused || g_rewind_hotkey;
+     if (pause_audio != audiopaused || g_dialog_audio_dirty) {
+       audiopaused = pause_audio;
+       SetAudioPaused(audiopaused);
+@@ -3220,6 +3098,28 @@
+       snes_host_clock_reset(&video_clock, MonotonicSeconds(), g_simulation_hz, presentation_hz);
+       SDL_Delay(16);
+       continue;
++    }
++    if(g_rewind_hotkey && !snes_savestate_menu_is_open()) {
++      if(!snes_rewind_is_open() && snes_rewind_open()) {
++        AckmanHostStateLoadBegin();g_rewind_audio_locked=true;
++        host_report_breadcrumb("hold rewind started: guest frozen, audio muted");
++      }
++      double rewind_start=MonotonicSeconds();
++      if(snes_rewind_is_open() && snes_rewind_tick()) {
++        uint64_t restored_clock=g_cpu.master_cycles;
++        CaptureSimulationFrame(frameCtr);
++        /* Replaying HDMA changes PPU/DMA registers. Preserve only the rendered
++         * external field, restoring the saved guest again before release. */
++        if(!snes_rewind_restore_current())Die("Rewind render restoration failed");
++        g_state_generation=RtlStateGeneration();
++        const char *path=getenv("ACKMAN_REWIND_TRACE");
++        if(path && *path){FILE *f=fopen(path,"a");if(f){fprintf(f,"%u,%llu,%08x\n",frameCtr,(unsigned long long)restored_clock,crc32_compute(g_ram,sizeof(g_ram)));fclose(f);}}
++      }
++      g_present_alpha=1;DrawPpuFrameWithPerf();++presentations;
++      snes_host_clock_reset(&video_clock,MonotonicSeconds(),g_simulation_hz,presentation_hz);
++      double delay=1.0/presentation_hz-(MonotonicSeconds()-rewind_start);
++      if(delay>0)SDL_Delay((uint32_t)(delay*1000.0)+1);
++      continue; /* No CPU/APU advance, run-ahead, script tick or capture. */
+     }
+ 
+     // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
+@@ -3269,7 +3169,7 @@
+           g_present_frame = frameCtr;
+           snes_osd_note_frame();
+           CaptureSimulationFrame(frameCtr);
+-          NoteStateFrame();
++          NoteStateFrame(false);
+           snes_netplay_finish_frame();
+           if (burst >= snes_host_catchup_budget())
+             break;
+@@ -3430,16 +3330,6 @@
+       }
+     }
+ 
+-    if ((g_rewind_hotkey || RewindGesturePressed()) && !snes_rewind_is_open() &&
+-        !snes_savestate_menu_is_open()) {
+-      /* Refused during netplay by snes_rewind_open() itself: one machine
+-       * cannot move its own clock backwards while a peer is watching. */
+-      if (snes_rewind_open()) {
+-        RunRewindLoop(&running);
+-        continue;   /* guest was frozen: no frame to run or present */
+-      }
+-    }
+-    g_rewind_hotkey = 0;
+     /* Exactly ONE poll_open per frame: it latches the previous word to edge
+      * detect on, so a second call in the same frame eats the edge. */
+     (void)snes_savestate_menu_poll_open(human);
+@@ -3476,6 +3366,7 @@
+      * than a branch. Never during turbo: speculating about frames that are
+      * being skipped costs work for a picture nobody is reading. */
+     bool runahead_captured = false;
++    rewind_real_ready=false;
+     {
+       const uint32 word = inputs | GetActiveControllers() | debug_server_get_controller_active_mask();
+       if (g_turbo || !snes_runahead_run_frame(word))
+@@ -3523,7 +3414,7 @@
+      * inert. */
+     if (!runahead_captured)
+       CaptureSimulationFrame(frameCtr);
+-    NoteStateFrame();
++    NoteStateFrame(runahead_captured);
+     g_audio_producer_active = false;
+     ProfileEnd(kProfileRaster, profile_start);
+     profile_start = ProfileStart();
+@@ -3581,6 +3472,7 @@
+     WriteConfigFile(g_active_config_file);
+ 
+   RtlWriteSram();
++  if(g_rewind_audio_locked){snes_rewind_commit();AckmanHostStateLoadEnd();g_rewind_audio_locked=false;}
+   snes_rewind_shutdown();
+   snes_runahead_shutdown();
+ #if defined(SNESRECOMP_HOST_HAS_BLEND)
+@@ -3631,6 +3523,8 @@
+     g_input_state = pressed ? (g_input_state | m) : (g_input_state & ~m);
+     return;
+   }
++
++  if (j == kKeys_Rewind) {g_rewind_hotkey=pressed;return;}
+ 
+   if (j == kKeys_Turbo) {
+     g_turbo = pressed;
+@@ -3668,7 +3562,6 @@
+     case kKeys_WindowBigger: ChangeWindowScale(1); break;
+     case kKeys_WindowSmaller: ChangeWindowScale(-1); break;
+     case kKeys_DisplayPerf: snes_osd_toggle_fps(); break;
+-    case kKeys_Rewind: g_rewind_hotkey = 1; break;
+     case kKeys_Screenshot: RequestScreenshot(); break;
+     case kKeys_ToggleRenderer:
+       g_ppu_render_flags ^= kPpuRenderFlags_NewRenderer;
+diff --git a/runner/src/desktop/mmx_config.c b/runner/src/desktop/mmx_config.c
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -522,7 +522,11 @@
+       return true;
+     }
+   } else if (section == 3) {
+-    if (StringEqualsNoCase(key, "RunAhead")) {
++    if (StringEqualsNoCase(key, "RewindDepth")) {
++      g_config.rewind_depth=(int)strtol(value,NULL,10);return true;
++    } else if (StringEqualsNoCase(key, "RewindInterval")) {
++      g_config.rewind_interval=(int)strtol(value,NULL,10);return true;
++    } else if (StringEqualsNoCase(key, "RunAhead")) {
+       g_config.run_ahead = (int)strtol(value, (char **)NULL, 10);
+       return true;
+     } else if (StringEqualsNoCase(key, "PauseWhenInactive")) {
+@@ -583,6 +587,7 @@
+   g_config.enable_audio = true;
+   g_config.vsync = true;g_config.pause_when_inactive = true;
+   g_config.volume = 100;
++  g_config.rewind_depth=240;g_config.rewind_interval=2;
+   /* Audio defaults match the values shipped in config.ini's [Sound]
+    * section. Without these a release with no config.ini next to the
+    * exe leaves audio_freq/audio_channels/audio_samples at 0, which
+@@ -624,6 +629,9 @@
+     fprintf(stderr, "Warning: Unable to read config file %s\n", filename);
+   int ra_max=SNES_RUNAHEAD_MAX<10?SNES_RUNAHEAD_MAX:10;
+   if(g_config.run_ahead<0)g_config.run_ahead=0;
++  if(g_config.rewind_depth<4)g_config.rewind_depth=4;
++  if(g_config.rewind_depth>240)g_config.rewind_depth=240;
++  if(g_config.rewind_interval!=4 && g_config.rewind_interval!=6)g_config.rewind_interval=2;
+   if(g_config.run_ahead>ra_max)g_config.run_ahead=ra_max;
+   g_config.has_keyboard_controls = (g_config.player_src[0] == 1 ? 1 : 0) |
+                                    (g_config.player_src[1] == 1 ? 2 : 0);
+@@ -684,6 +692,8 @@
+   NUMBER("General", "PauseWhenInactive", g_config.pause_when_inactive);
+   NUMBER("General", "DisableFrameDelay", g_config.disable_frame_delay);
+   NUMBER("General", "RunAhead", g_config.run_ahead);
++  NUMBER("General", "RewindDepth", g_config.rewind_depth);
++  NUMBER("General", "RewindInterval", g_config.rewind_interval);
+   NUMBER("Graphics", "VSync", g_config.vsync);
+   TEXT("Graphics", "OutputMethod", g_config.output_method == kOutputMethod_OpenGL ? "OpenGL" :
+        g_config.output_method == kOutputMethod_SDLSoftware ? "SDL-Software" : "SDL");
+diff --git a/runner/src/snes/ppu.c b/runner/src/snes/ppu.c
+--- a/runner/src/snes/ppu.c
++++ b/runner/src/snes/ppu.c
+@@ -2783,6 +2783,28 @@
+   uint8_t tm, tmw, cgadsub, hdmaen;
+   uint8_t scrollPrev, scrollPrev2;
+ } s_raster0;
++/* Process-local rewind journal, independent of the portable savestate format.
++ * Register writes are data, not thumbnails; replay never executes guest IRQs. */
++size_t ppu_rasterSnapshotSize(void) {
++  return sizeof(s_raster0)+sizeof(s_raster_count)+sizeof(s_raster);
++}
++bool ppu_rasterSaveSnapshot(void *data,size_t size) {
++  if(!data || size!=ppu_rasterSnapshotSize())return false;
++  uint8_t *p=data;
++  memcpy(p,&s_raster0,sizeof(s_raster0));p+=sizeof(s_raster0);
++  memcpy(p,&s_raster_count,sizeof(s_raster_count));p+=sizeof(s_raster_count);
++  memcpy(p,s_raster,sizeof(s_raster));return true;
++}
++bool ppu_rasterLoadSnapshot(const void *data,size_t size) {
++  if(!data || size!=ppu_rasterSnapshotSize())return false;
++  const uint8_t *p=data;int count;
++  memcpy(&count,p+sizeof(s_raster0),sizeof(count));
++  if(count<0 || count>PPU_RASTER_MAX)return false;
++  memcpy(&s_raster0,p,sizeof(s_raster0));p+=sizeof(s_raster0)+sizeof(count);
++  memcpy(s_raster,p,sizeof(s_raster));s_raster_count=count;
++  s_raster_armed=1;s_raster_next=0;s_raster_hdmaen_pending=0;
++  s_raster_hdmaen=s_raster0.hdmaen;return true;
++}
+ 
+ static int raster_reg_journaled(uint16_t reg) {
+   switch (reg) {
+diff --git a/runner/src/snes/ppu.h b/runner/src/snes/ppu.h
+--- a/runner/src/snes/ppu.h
++++ b/runner/src/snes/ppu.h
+@@ -515,6 +515,9 @@
+  * vblank-edge work and ApplyLine in its render loop; the register write path
+  * calls Record with the beam line. */
+ void ppu_rasterBegin(Ppu *ppu);
++size_t ppu_rasterSnapshotSize(void);
++bool ppu_rasterSaveSnapshot(void *data,size_t size);
++bool ppu_rasterLoadSnapshot(const void *data,size_t size);
+ void ppu_rasterRenderBegin(Ppu *ppu);
+ int  ppu_rasterTakeHdmaen(uint8_t *out);
+ void ppu_rasterRecord(uint16_t reg, uint16_t line, uint8_t val);
+diff --git a/runner/src/snes_rewind.c b/runner/src/snes_rewind.c
+--- a/runner/src/snes_rewind.c
++++ b/runner/src/snes_rewind.c
+@@ -1,415 +1,90 @@
+-/*
+- * snes_rewind.c — a ring of whole-machine snapshots, and a filmstrip.
+- *
+- * A snapshot is RtlSaveSnapshotToMemory() -- the SAME thing a save-state file
+- * holds, minus the file. Deliberately not a hand-rolled snes_saveload() sink:
+- * that would capture the machine but skip everything the real path wraps
+- * around it -- the magic/version header, the APU lock, and the game's own
+- * state_save_extra, which on a widescreen port is where fields that sit
+- * outside ppu_saveload live. A rewind that restored 99% of the machine would
+- * be worse than no rewind, because the missing 1% would look like a game bug.
+- *
+- * The ring sizes ITSELF from the first snapshot rather than a hardcoded
+- * guess, which would either waste memory or silently truncate the day the
+- * save format grows a field.
+- */
+-
++/* Hold-to-rewind: RAM-only machine snapshots plus their raster journal.
++ * No thumbnail, filmstrip, diagnostic bar or filesystem traffic. */
+ #include "snes_rewind.h"
+-
++#include "common_rtl.h"
++#include "desktop/config.h"
++#include "snes/ppu.h"
++#include "netplay/snes_netplay.h"
++#include "ackman_flow.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+-
+-#include "snes_overlay_draw.h"
+-#include "common_rtl.h"
+-#include "netplay/snes_netplay.h"
+-
+-/* Thumbnail geometry matches the save-state menu so the two overlays look
+- * like one product rather than two features. */
+-#define RW_THUMB_W 128
+-#define RW_THUMB_H 112
+-
+-#define RW_DEPTH_DEFAULT   60
+-#define RW_DEPTH_MIN        4
+-#define RW_DEPTH_MAX      240
+-#define RW_INTERVAL_DEFAULT 6
+-#define RW_INTERVAL_MIN     1
+-#define RW_INTERVAL_MAX    60
+-
+-typedef struct {
+-    uint8_t *blob;                     /* one whole-machine snapshot */
+-    size_t   len;
+-    size_t   cap;
+-    uint32_t thumb[RW_THUMB_W * RW_THUMB_H];
+-    int      have_thumb;
+-    int      valid;
+-} RwSlot;
+-
+-static int      s_configured;
+-static int      s_enabled = 1;
+-static int      s_depth = RW_DEPTH_DEFAULT;
+-static int      s_interval = RW_INTERVAL_DEFAULT;
+-static size_t   s_blob_size;           /* learned from the first capture */
+-
+-static RwSlot  *s_ring;
+-static int      s_head;                /* next slot to write */
+-static int      s_count;               /* live slots, <= s_depth */
+-static int      s_frame_tick;
+-
+-static int      s_open;
+-static int      s_sel;                 /* 0 = newest, grows going back */
+-
+-static uint32_t s_live_thumb[RW_THUMB_W * RW_THUMB_H];
+-static int      s_have_live_thumb;
+-
+-/* ---- env ---------------------------------------------------------------- */
+-
+-static int env_int(const char *name, int def, int lo, int hi) {
+-    const char *v = getenv(name);
+-    int n;
+-    if (!v || !v[0]) return def;
+-    n = atoi(v);
+-    if (n < lo) n = lo;
+-    if (n > hi) n = hi;
+-    return n;
++#define RW_PROBE_CAP (2u*1024u*1024u)
++typedef struct { uint8_t *blob,*raster;size_t len,cap,raster_size;uint32_t presentation[5];int valid; } RwSlot;
++static RwSlot *s_ring;
++static int s_enabled=1,s_configured,s_depth=240,s_interval=2;
++static int s_head,s_count,s_frame_tick,s_open,s_sel;
++static size_t s_blob_size;
++void snes_rewind_shutdown(void) {
++    if(s_ring){for(int i=0;i<s_depth;i++){free(s_ring[i].blob);free(s_ring[i].raster);}free(s_ring);}
++    s_ring=NULL;s_head=s_count=s_frame_tick=s_open=0;s_sel=-1;s_blob_size=0;s_enabled=1;s_configured=0;
+ }
+-
+ void snes_rewind_configure(void) {
+-    const char *off;
+-    if (s_configured) return;
+-    s_configured = 1;
+-
+-    off = getenv("SNESRECOMP_REWIND");
+-    if (off && off[0] == '0') { s_enabled = 0; return; }
+-
+-    s_depth = env_int("SNESRECOMP_REWIND_DEPTH", RW_DEPTH_DEFAULT,
+-                      RW_DEPTH_MIN, RW_DEPTH_MAX);
+-    s_interval = env_int("SNESRECOMP_REWIND_INTERVAL", RW_INTERVAL_DEFAULT,
+-                         RW_INTERVAL_MIN, RW_INTERVAL_MAX);
+-
+-    s_ring = (RwSlot *)calloc((size_t)s_depth, sizeof(RwSlot));
+-    if (!s_ring) {
+-        /* Out of memory is a reason to not have rewind, not a reason to die.
+-         * Say so once: a silently absent feature is a support question. */
+-        fprintf(stderr, "[snes_rewind] could not allocate %d slots; disabled\n",
+-                s_depth);
+-        s_enabled = 0;
+-        return;
++    int depth=g_config.rewind_depth<4?4:g_config.rewind_depth>240?240:g_config.rewind_depth;
++    int interval=g_config.rewind_interval==4 || g_config.rewind_interval==6?g_config.rewind_interval:2;
++    if(s_configured && depth==s_depth && interval==s_interval)return;
++    snes_rewind_shutdown();s_depth=depth;s_interval=interval;s_configured=1;
++    const char *off=getenv("SNESRECOMP_REWIND");if(off && off[0]=='0'){s_enabled=0;return;}
++    s_ring=calloc((size_t)s_depth,sizeof(*s_ring));
++    if(!s_ring){s_enabled=0;fprintf(stderr,"[snes_rewind] allocation failed; disabled\n");return;}
++    fprintf(stderr,"[snes_rewind] hold mode: %d snapshots every %d frames (%.1fs)\n",s_depth,s_interval,s_depth*s_interval/60.0);
++}
++int snes_rewind_enabled(void){return s_enabled && s_ring!=NULL;}
++void snes_rewind_note_frame(void) {
++    if(!snes_rewind_enabled() || s_open)return;
++#if defined(SNESRECOMP_NET)
++    if(snes_netplay_active())return;
++#endif
++    if(++s_frame_tick<s_interval)return;s_frame_tick=0;
++    if(!s_blob_size) {
++        uint8_t *probe=malloc(RW_PROBE_CAP);if(!probe)return;
++        s_blob_size=RtlSaveSnapshotToMemory(probe,RW_PROBE_CAP);free(probe);
++        if(!s_blob_size)return;
++        fprintf(stderr,"[snes_rewind] snapshot is %zu bytes; no thumbnails\n",s_blob_size);
+     }
+-    fprintf(stderr, "[snes_rewind] %d snapshots every %d frames (%.1fs of history)\n",
+-            s_depth, s_interval, (double)s_depth * s_interval / 60.0);
++    RwSlot *slot=&s_ring[s_head];
++    if(!slot->blob){slot->cap=s_blob_size+4096;slot->blob=malloc(slot->cap);}
++    size_t journal_size=ppu_rasterSnapshotSize();
++    if(!slot->raster){slot->raster=malloc(journal_size);slot->raster_size=journal_size;}
++    if(!slot->blob || !slot->raster)return;
++    slot->valid=0;
++    size_t n=RtlSaveSnapshotToMemory(slot->blob,slot->cap);
++    if(!n || !ppu_rasterSaveSnapshot(slot->raster,slot->raster_size))return;
++    AckmanFlowSaveRewind(slot->presentation);
++    slot->len=n;slot->valid=1;s_head=(s_head+1)%s_depth;if(s_count<s_depth)s_count++;
+ }
+-
+-void snes_rewind_shutdown(void) {
+-    int i;
+-    if (s_ring) {
+-        for (i = 0; i < s_depth; i++) free(s_ring[i].blob);
+-        free(s_ring);
+-        s_ring = NULL;
+-    }
+-    s_count = s_head = s_sel = 0;
+-    s_frame_tick = 0;
+-    s_blob_size = 0;
+-    s_have_live_thumb = 0;
+-    s_enabled = 1;
+-    s_open = 0;
+-    s_configured = 0;
++static RwSlot *slot_at(int sel) {
++    if(sel<0 || sel>=s_count)return NULL;
++    return &s_ring[(s_head-1-sel+s_depth)%s_depth];
+ }
+-
+-int snes_rewind_enabled(void) { return s_enabled && s_ring != NULL; }
+-
+-/* ---- capture ------------------------------------------------------------ */
+-
+-/* Generous ceiling for the first probe; the real size replaces it. */
+-#define RW_PROBE_CAP (2u * 1024u * 1024u)
+-
+-static void capture(void) {
+-    RwSlot *slot;
+-    size_t n;
+-
+-    if (!s_blob_size) {
+-        uint8_t *probe = (uint8_t *)malloc(RW_PROBE_CAP);
+-        if (!probe) return;
+-        n = RtlSaveSnapshotToMemory(probe, RW_PROBE_CAP);
+-        free(probe);
+-        if (!n) return;                /* machine not ready yet; try later */
+-        s_blob_size = n;
+-        fprintf(stderr, "[snes_rewind] snapshot is %zu bytes; ring is %.1f MB\n",
+-                s_blob_size,
+-                (double)s_blob_size * (double)s_depth / (1024.0 * 1024.0));
+-    }
+-
+-    slot = &s_ring[s_head];
+-    if (!slot->blob) {
+-        /* Headroom: a snapshot can legitimately differ in size between
+-         * frames (the game's extra chunk is not fixed-width), and a capture
+-         * that does not fit is a capture lost. */
+-        slot->cap = s_blob_size + (s_blob_size / 8) + 4096;
+-        slot->blob = (uint8_t *)malloc(slot->cap);
+-        if (!slot->blob) { slot->cap = 0; return; }
+-    }
+-
+-    n = RtlSaveSnapshotToMemory(slot->blob, slot->cap);
+-    if (!n) {
+-        /* Did not fit, or the machine refused. Record nothing rather than a
+-         * partial snapshot: restoring one would put the machine into a state
+-         * that never existed. */
+-        slot->valid = 0;
+-        return;
+-    }
+-    slot->len = n;
+-    slot->valid = 1;
+-    slot->have_thumb = s_have_live_thumb;
+-    if (s_have_live_thumb)
+-        memcpy(slot->thumb, s_live_thumb, sizeof(slot->thumb));
+-
+-    s_head = (s_head + 1) % s_depth;
+-    if (s_count < s_depth) s_count++;
++int snes_rewind_open(void) {
++    if(!snes_rewind_enabled() || s_count<2)return 0;
++#if defined(SNESRECOMP_NET)
++    if(snes_netplay_active())return 0;
++#endif
++    s_open=1;s_sel=-1;return 1;
+ }
+-
+-void snes_rewind_note_frame(void) {
+-    if (!snes_rewind_enabled() || s_open) return;
+-    /* Rewinding is one machine moving its own clock backwards. Two peers
+-     * cannot do that independently and still agree, so there is nothing to
+-     * record during a session. */
+-#if defined(SNESRECOMP_NET)
+-    if (snes_netplay_active()) return;
+-#endif
+-    if (++s_frame_tick < s_interval) return;
+-    s_frame_tick = 0;
+-    capture();
++int snes_rewind_is_open(void){return s_open;}
++int snes_rewind_restore_current(void) {
++    RwSlot *slot=slot_at(s_sel);
++    if(!slot || !slot->valid || !RtlLoadSnapshotFromMemory(slot->blob,slot->len) ||
++       !ppu_rasterLoadSnapshot(slot->raster,slot->raster_size))return 0;
++    AckmanFlowLoadRewind(slot->presentation);return 1;
+ }
+-
+-void snes_rewind_note_framebuffer(const uint32_t *fb, int width, int height) {
+-    int x, y;
+-    if (!snes_rewind_enabled() || !fb || width <= 0 || height <= 0 || s_open)
+-        return;
+-    for (y = 0; y < RW_THUMB_H; y++) {
+-        const uint32_t *row = fb + (size_t)(y * height / RW_THUMB_H) * (size_t)width;
+-        uint32_t *out = s_live_thumb + (size_t)y * RW_THUMB_W;
+-        for (x = 0; x < RW_THUMB_W; x++)
+-            out[x] = row[x * width / RW_THUMB_W] | 0xFF000000u;
+-    }
+-    s_have_live_thumb = 1;
++int snes_rewind_tick(void) {
++    if(!s_open || s_sel>=s_count-1)return 0;
++    s_sel++;
++    if(snes_rewind_restore_current())return 1;
++    fprintf(stderr,"[snes_rewind] internal snapshot refused; stopped\n");snes_rewind_commit();return 0;
+ }
+-
+-/* ---- selection ---------------------------------------------------------- */
+-
+-/* sel 0 is the newest snapshot; sel grows going back in time. */
+-static RwSlot *slot_at(int sel) {
+-    int idx;
+-    if (sel < 0 || sel >= s_count) return NULL;
+-    idx = s_head - 1 - sel;
+-    while (idx < 0) idx += s_depth;
+-    return &s_ring[idx];
++void snes_rewind_commit(void) {
++    if(!s_open)return;
++    if(s_sel>=0){s_count-=s_sel;s_head=(s_head-s_sel+s_depth)%s_depth;}
++    s_open=0;s_sel=-1;s_frame_tick=0;
+ }
+-
+-int snes_rewind_open(void) {
+-    if (!snes_rewind_enabled()) return 0;
+-#if defined(SNESRECOMP_NET)
+-    if (snes_netplay_active()) return 0;
+-#endif
+-    if (s_count < 2) return 0;         /* nothing to go back to */
+-    s_open = 1;
+-    s_sel = 0;
+-    return 1;
+-}
+-
+-int snes_rewind_is_open(void) { return s_open; }
+-
+-void snes_rewind_step(int dir) {
+-    if (!s_open) return;
+-    /* Clamp rather than wrap: wrapping from the oldest snapshot round to the
+-     * newest would silently move the player FORWARDS, which is not what any
+-     * press of "further back" can reasonably mean. */
+-    s_sel += (dir < 0) ? 1 : -1;
+-    if (s_sel < 0) s_sel = 0;
+-    if (s_sel >= s_count) s_sel = s_count - 1;
+-}
+-
+-float snes_rewind_selected_seconds(void) {
+-    return (float)s_sel * (float)s_interval / 60.0f;
+-}
+-
+-void snes_rewind_commit(void) {
+-    RwSlot *slot = slot_at(s_sel);
+-    if (!s_open) return;
+-    s_open = 0;
+-    if (!slot || !slot->valid) return;
+-    if (!RtlLoadSnapshotFromMemory(slot->blob, slot->len)) {
+-        /* Refused (bad magic, version drift, short read). The machine is
+-         * untouched -- the loader validates before it writes anything -- so
+-         * the honest move is to leave the player where they were. */
+-        fprintf(stderr, "[snes_rewind] snapshot %d refused; staying put\n", s_sel);
+-        return;
+-    }
+-
+-    /* Drop everything after the point we landed on. The machine is there now,
+-     * and keeping snapshots from the timeline just abandoned would let the
+-     * next rewind travel to a future that no longer happens. */
+-    s_count -= s_sel;
+-    s_head = s_head - s_sel;
+-    while (s_head < 0) s_head += s_depth;
+-    s_sel = 0;
+-    s_frame_tick = 0;
+-}
+-
+-void snes_rewind_close(void) { s_open = 0; s_sel = 0; }
+-
+-/* ---- filmstrip ---------------------------------------------------------- */
+-
+-/*
+- * A strip of thumbnails along the bottom, newest on the right, with the
+- * selection boxed. Sized to the SNES frame so the host can blit it over the
+- * game rect with the same destination it already computes.
+- */
+-#define RW_STRIP_W   512
+-#define RW_STRIP_H   176   /* caption 34 + thumbs 63 + hint row 32 + margins */
+-#define RW_CELL_W     72
+-#define RW_CELL_H     63
+-#define RW_CELL_GAP    6
+-#define RW_CAPTION_Y  10
+-
+-static uint32_t s_strip[RW_STRIP_W * RW_STRIP_H];
+-
+-/* Text and face buttons come from snes_overlay_draw.c.
+- *
+- * The comment that used to sit here said the 8x8 font lived only in
+- * snes_osd.c and that a plain progress bar was worth avoiding a second copy.
+- * That was already untrue -- snes_savestate_menu.c had its own FONT8 -- so
+- * the strip was doing without a caption to avoid a duplication that had
+- * happened anyway. The font now lives in one place and all three overlays
+- * share it. */
+-static void strip_fill(int x0, int y0, int w, int h, uint32_t col) {
+-    int x, y;
+-    for (y = y0; y < y0 + h; y++) {
+-        if (y < 0 || y >= RW_STRIP_H) continue;
+-        for (x = x0; x < x0 + w; x++) {
+-            if (x < 0 || x >= RW_STRIP_W) continue;
+-            s_strip[y * RW_STRIP_W + x] = col;
+-        }
+-    }
+-}
+-
+-static void strip_frame(int x0, int y0, int w, int h, uint32_t col, int t) {
+-    strip_fill(x0, y0, w, t, col);
+-    strip_fill(x0, y0 + h - t, w, t, col);
+-    strip_fill(x0, y0, t, h, col);
+-    strip_fill(x0 + w - t, y0, t, h, col);
+-}
+-
+-static void strip_thumb(const uint32_t *thumb, int x0, int y0, int w, int h) {
+-    int x, y;
+-    for (y = 0; y < h; y++) {
+-        const uint32_t *row = thumb + (size_t)(y * RW_THUMB_H / h) * RW_THUMB_W;
+-        for (x = 0; x < w; x++) {
+-            const int dx = x0 + x, dy = y0 + y;
+-            if (dx < 0 || dx >= RW_STRIP_W || dy < 0 || dy >= RW_STRIP_H) continue;
+-            s_strip[dy * RW_STRIP_W + dx] = row[x * RW_THUMB_W / w] | 0xFF000000u;
+-        }
+-    }
+-}
+-
+-/* Title and how far back the selection is, over a bar tracking the same thing.
+- * Full bar = the whole ring. */
+-static void strip_caption(void) {
+-    const int track_x = 12, track_w = RW_STRIP_W - 24, track_h = 4;
+-    const int bar_y = RW_CAPTION_Y + 20;
+-    char buf[48];
+-    float secs = snes_rewind_selected_seconds();
+-    int fill, whole, tenths;
+-
+-    snes_ovl_draw_text(s_strip, RW_STRIP_W, RW_STRIP_H,
+-                       12, RW_CAPTION_Y, "REWIND", 0xFFFFD24Du, 2);
+-
+-    /* -1.2s, formatted without printf's float support: some runner targets
+-     * build against a minimal libc where %f is not linked in. */
+-    whole = (int)secs;
+-    tenths = (int)((secs - (float)whole) * 10.0f + 0.5f);
+-    if (tenths > 9) { whole += 1; tenths = 0; }
+-    snprintf(buf, sizeof(buf), "-%d.%dS", whole, tenths);
+-    snes_ovl_draw_text(s_strip, RW_STRIP_W, RW_STRIP_H,
+-                       RW_STRIP_W - 12 - (int)strlen(buf) * 16,
+-                       RW_CAPTION_Y, buf, 0xFFE2E5EBu, 2);
+-
+-    strip_fill(track_x, bar_y, track_w, track_h, 0xFF303030u);
+-    if (s_count > 1) {
+-        fill = track_w - (int)((long)track_w * s_sel / (s_count - 1));
+-        if (fill < 2) fill = 2;
+-        strip_fill(track_x, bar_y, fill, track_h, 0xFFE0E0E0u);
+-    }
+-}
+-
+-/* Face-button glyphs and nothing else.
+- *
+- * This started as a copy of the save-state menu's hint row: two glyph+label
+- * pairs, then "LEFT RIGHT SCRUB", then a line of keyboard equivalents. In the
+- * filmstrip that reads as clutter -- the strip is one horizontal row of
+- * thumbnails with an obvious direction, so naming the directions explains
+- * nothing, and the keyboard line repeats what the glyphs already say. Only the
+- * two actions a player has to be told survive, and they get the whole band. */
+-static void strip_hints(void) {
+-    const int band_y = RW_STRIP_H - 44;
+-    const int band_h = RW_STRIP_H - band_y;
+-    const int btn_y  = band_y + (band_h - 18) / 2;
+-
+-    snes_ovl_fill_rect(s_strip, RW_STRIP_W, RW_STRIP_H,
+-                       0, band_y, RW_STRIP_W, band_h, 0xFF171B25u);
+-    snes_ovl_draw_button(s_strip, RW_STRIP_W, RW_STRIP_H,
+-                         12, btn_y, 'A', SNES_OVL_COL_A);
+-    snes_ovl_draw_text(s_strip, RW_STRIP_W, RW_STRIP_H,
+-                       36, btn_y + 5, "SELECT", 0xFFE2E5EBu, 1);
+-    snes_ovl_draw_button(s_strip, RW_STRIP_W, RW_STRIP_H,
+-                         120, btn_y, 'B', SNES_OVL_COL_B);
+-    snes_ovl_draw_text(s_strip, RW_STRIP_W, RW_STRIP_H,
+-                       144, btn_y + 5, "BACK", 0xFFE2E5EBu, 1);
+-}
+-
+-int snes_rewind_overlay_image(const uint32_t **pixels, int *w, int *h) {
+-    int i, visible, first, x;
+-    /* Below the caption: title text (8px cell x2 scale = 16) plus the bar at
+-     * +20 and 4 tall, so 34 is the first free row. */
+-    const int strip_y = RW_CAPTION_Y + 32;
+-
+-    if (!s_open) {
+-        if (pixels) *pixels = NULL;
+-        if (w) *w = 0;
+-        if (h) *h = 0;
+-        return 0;
+-    }
+-
+-    for (i = 0; i < RW_STRIP_W * RW_STRIP_H; i++)
+-        s_strip[i] = 0xE0101014u;      /* translucent-looking dark panel */
+-
+-    strip_caption();
+-    strip_hints();
+-
+-    /* Show a window of cells centred on the selection, newest to the right. */
+-    visible = (RW_STRIP_W - 24) / (RW_CELL_W + RW_CELL_GAP);
+-    if (visible < 1) visible = 1;
+-    first = s_sel - visible / 2;
+-    if (first < 0) first = 0;
+-    if (first + visible > s_count) first = s_count - visible;
+-    if (first < 0) first = 0;
+-
+-    x = 12;
+-    for (i = 0; i < visible && first + i < s_count; i++) {
+-        /* Rightmost cell is the newest, so draw the window in reverse. */
+-        const int sel = first + (visible - 1 - i);
+-        const RwSlot *slot = (sel >= 0 && sel < s_count) ? slot_at(sel) : NULL;
+-        const int cx = x + i * (RW_CELL_W + RW_CELL_GAP);
+-        if (!slot) continue;
+-        if (slot->have_thumb)
+-            strip_thumb(slot->thumb, cx, strip_y, RW_CELL_W, RW_CELL_H);
+-        else
+-            strip_fill(cx, strip_y, RW_CELL_W, RW_CELL_H, 0xFF202028u);
+-        strip_frame(cx - 1, strip_y - 1, RW_CELL_W + 2, RW_CELL_H + 2,
+-                    (sel == s_sel) ? 0xFFFFFFFFu : 0xFF404048u,
+-                    (sel == s_sel) ? 2 : 1);
+-    }
+-
+-    if (pixels) *pixels = s_strip;
+-    if (w) *w = RW_STRIP_W;
+-    if (h) *h = RW_STRIP_H;
+-    return 1;
+-}
++void snes_rewind_close(void){snes_rewind_commit();}
++/* Compatibility entry points retain no imagery or modal selection. */
++void snes_rewind_step(int dir){if(dir<0)(void)snes_rewind_tick();}
++float snes_rewind_selected_seconds(void){return (float)(s_sel<0?0:s_sel)*s_interval/60.0f;}
++void snes_rewind_note_framebuffer(const uint32_t *fb,int w,int h){(void)fb;(void)w;(void)h;}
++int snes_rewind_overlay_image(const uint32_t **pixels,int *w,int *h){if(pixels)*pixels=NULL;if(w)*w=0;if(h)*h=0;return 0;}
+diff --git a/runner/src/snes_rewind.h b/runner/src/snes_rewind.h
+--- a/runner/src/snes_rewind.h
++++ b/runner/src/snes_rewind.h
+@@ -1,90 +1,31 @@
+ #ifndef SNES_REWIND_H
+ #define SNES_REWIND_H
+-
+ #include <stdint.h>
+-
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+-
+-/*
+- * Local rewind — a ring of whole-machine snapshots and a filmstrip to pick
+- * one out of.
+- *
+- * Same division of labour as snes_savestate_menu.c: the framework owns the
+- * ring, the selection and the pixels; the host only pumps events and presents.
+- * psxrecomp's psx_rewind.c is the model, but not the source — that one is
+- * built on retcomm-rbengine's snap_ring and PSX boot-state blobs, neither of
+- * which exists here. What SNES has instead is snes_saveload() over a caller
+- * supplied sink, so a snapshot is just that sink pointed at memory.
+- *
+- * NEVER runs during netplay. Rewinding is one machine moving its own clock
+- * backwards; two peers cannot do that independently and still agree, and the
+- * workspace rule against stepping one observer to sync it with another is
+- * exactly this case. snes_rewind_note_frame() captures nothing while
+- * snes_netplay_active(), and open() refuses.
+- *
+- * Cost is honest about itself: a snapshot is the whole machine (~256 KB), and
+- * the ring is depth x that. Defaults to 60 snapshots every 6 frames — six
+- * seconds of history for ~16 MB. Env overrides:
+- *   SNESRECOMP_REWIND=0        disable entirely
+- *   SNESRECOMP_REWIND_DEPTH    snapshots kept (4..240, default 60)
+- *   SNESRECOMP_REWIND_INTERVAL guest frames between captures (1..60, default 6)
+- *
+- * Host wiring:
+- *   once, after the machine exists:      snes_rewind_configure()
+- *   per guest frame, after RtlRunFrame:  snes_rewind_note_frame()
+- *   per present, after compositing:      snes_rewind_note_framebuffer(fb,w,h)
+- *   on the hotkey / pad gesture:         snes_rewind_open()
+- *   while open, a modal pump calling:    snes_rewind_step(-1|+1)
+- *                                        snes_rewind_commit() / _close()
+- *                                        snes_rewind_overlay_image(...)
+- */
+-
+-/* Allocate the ring and read the env overrides. Safe to call more than once;
+- * a second call with the same settings is a no-op. */
++/* Whole-machine RAM ring. Defaults: 240 captures, interval 2 (about 8 seconds).
++ * No images or disk I/O. Disabled during netplay. Config owns depth/interval.
++ * The host pauses audio for the hold, ticks once per presentation and renders
++ * restored raster history without running CPU/APU. Release commits/trims future. */
+ void snes_rewind_configure(void);
+ void snes_rewind_shutdown(void);
+-
+-/* False when disabled by env, or when the ring could not be allocated. */
+ int snes_rewind_enabled(void);
+-
+-/* One emulated frame elapsed. Captures when the interval comes round, and
+- * only when the machine is actually running (not while the rewind UI or the
+- * save-state menu is up, and never during netplay). */
+ void snes_rewind_note_frame(void);
+-
+-/* Offer the presented frame as the thumbnail for the NEXT capture. Cheap: it
+- * downsamples into a small fixed buffer and keeps nothing else. */
+-void snes_rewind_note_framebuffer(const uint32_t *fb, int width, int height);
+-
+-/* Enter rewind. Returns 0 (and does nothing) when disabled, during netplay,
+- * or when fewer than two snapshots exist — there is nothing to go back to. */
+ int snes_rewind_open(void);
+ int snes_rewind_is_open(void);
+-
+-/* Move the selection. -1 is further back in time, +1 is nearer the present.
+- * Clamps at both ends rather than wrapping: wrapping from the oldest snapshot
+- * to the newest would silently jump the player forwards. */
++int snes_rewind_tick(void);
++/* Render may modify HDMA/PPU state: restore again after drawing, retaining only
++ * the external render buffer, so release resumes the exact saved guest state. */
++int snes_rewind_restore_current(void);
++void snes_rewind_commit(void);
++void snes_rewind_close(void);
++/* Compatibility only; no filmstrip allocation or rendering. */
+ void snes_rewind_step(int dir);
+-
+-/* Restore the selected snapshot and close. The snapshots after it are
+- * dropped: the machine is now at that point, and keeping the ones from the
+- * timeline just abandoned would let a second rewind travel to a future that
+- * no longer happened. */
+-void snes_rewind_commit(void);
+-
+-/* Leave without changing the machine. */
+-void snes_rewind_close(void);
+-
+-/* How far back the selection sits, in emulated seconds, for the caption. */
+ float snes_rewind_selected_seconds(void);
+-
+-/* ARGB8888 filmstrip. Valid until the next snes_rewind_* call. */
+-int snes_rewind_overlay_image(const uint32_t **pixels, int *w, int *h);
+-
++void snes_rewind_note_framebuffer(const uint32_t *fb,int width,int height);
++int snes_rewind_overlay_image(const uint32_t **pixels,int *w,int *h);
+ #ifdef __cplusplus
+ }
+ #endif
+-
+-#endif /* SNES_REWIND_H */
++#endif

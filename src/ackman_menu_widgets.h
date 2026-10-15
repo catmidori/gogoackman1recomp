@@ -1,0 +1,17 @@
+#pragma once
+/* Compatibility facade; implementation lives in recomp_menu_core. */
+#include "recomp_menu_widgets.h"
+#define AckmanConflict RecompConflict
+#define AckmanMenuActionButton RecompMenuActionButton
+#define AckmanMenuBeginFocusFrame RecompMenuBeginFocusFrame
+#define AckmanMenuBindingRow RecompMenuBindingRow
+#define AckmanMenuButton RecompMenuButton
+#define AckmanMenuCheckbox RecompMenuCheckbox
+#define AckmanMenuDropdown RecompMenuDropdown
+#define AckmanMenuModRow RecompMenuModRow
+#define AckmanMenuRegisterSelectorOptions RecompMenuRegisterSelectorOptions
+#define AckmanMenuResetSelectorOptions RecompMenuResetSelectorOptions
+#define AckmanMenuRowPadding RecompMenuRowPadding
+#define AckmanMenuSelector RecompMenuSelector
+#define AckmanMenuSelectorWidth RecompMenuSelectorWidth
+#define AckmanMenuWrapVertical RecompMenuWrapVertical

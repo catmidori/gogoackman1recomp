@@ -1,0 +1,247 @@
+--- a/runner/src/desktop/host_main.c
++++ b/runner/src/desktop/host_main.c
+@@ -765,6 +765,12 @@
+   else if(!strcmp(name,"Fullscreen"))AckmanMenuSetFullscreen(value!=0);
+   else if(!strcmp(name,"VSync"))AckmanMenuSetVSync(value!=0);
+   else if(!strcmp(name,"OutputMethod"))AckmanMenuSetOutputMethod(value);
++  else if(!strcmp(name,"Widescreen"))AckmanMenuSetWidescreen(value!=0);
++  else if(!strcmp(name,"WindowSize"))AckmanMenuSetWindowSize(value);
++  else if(!strcmp(name,"WindowScale"))AckmanMenuSetInternalScale(value);
++  else if(!strcmp(name,"EnableAudio"))AckmanMenuSetAudio(value!=0);
++  else if(!strcmp(name,"Volume"))AckmanMenuSetVolume(value);
++  else if(!strcmp(name,"AudioFreq"))AckmanMenuSetSampleRate(value);
+   else if(!strcmp(name,"Autosave"))g_config.autosave=value!=0;
+   else if(!strcmp(name,"PauseWhenInactive"))g_config.pause_when_inactive=value!=0;
+   else if(!strcmp(name,"NoSpriteLimits"))g_config.no_sprite_limits=value!=0;
+@@ -852,44 +858,8 @@
+ }
+ 
+ void ChangeWindowScale(int scale_step) {
+-  if ((SDL_GetWindowFlags(g_window) & (SNESRECOMP_SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MINIMIZED | SDL_WINDOW_MAXIMIZED)) != 0)
+-    return;
+-  int max_scale = kMaxWindowScale;
+-  SDL_Rect bounds;
+-  int bt = -1, bl, bb, br;
+-  /* Both return true-on-success in SDL3 (0-on-success in SDL2); the shims
+-   * normalise that, and taking the display from the window also matches SDL3's
+-   * DisplayID model. */
+-  if (snesrecomp_sdl_get_display_usable_bounds(g_window, &bounds)) {
+-    // this call may take a while before it is reported by Windows (or not at all in my testing)
+-    if (!snesrecomp_sdl_get_window_borders_size(g_window, &bt, &bl, &bb, &br)) {
+-      // guess based on Windows 10/11 defaults
+-      bl = br = bb = 1;
+-      bt = 31;
+-    }
+-    // Allow a scale level slightly above the max that fits on screen
+-    int logical_width = WindowBaseWidth(g_snes_width);
+-    int logical_height = WindowBaseHeight();
+-    int mw = (bounds.w - bl - br + logical_width / 4) / logical_width;
+-    int mh = (bounds.h - bt - bb + logical_height / 4) / logical_height;
+-    max_scale = IntMin(mw, mh);
+-  }
+-  int new_scale = IntMax(IntMin(g_current_window_scale + scale_step, max_scale), 1);
+-  g_current_window_scale = new_scale;
+-  int w = new_scale * WindowBaseWidth(g_snes_width);
+-  int h = new_scale * WindowBaseHeight();
+-
+-  SDL_SetWindowSize(g_window, w, h);
+-  if (bt >= 0) {
+-    // Center the window on top of the mouse
+-    int mx, my;
+-    snesrecomp_sdl_get_global_mouse_state(&mx, &my);
+-    int wx = IntMax(IntMin(mx - w / 2, bounds.x + bounds.w - bl - br - w), bounds.x + bl);
+-    int wy = IntMax(IntMin(my - h / 2, bounds.y + bounds.h - bt - bb - h), bounds.y + bt);
+-    SDL_SetWindowPosition(g_window, wx, wy);
+-  } else {
+-    SDL_SetWindowPosition(g_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+-  }
++  if(SDL_GetWindowFlags(g_window)&(SDL_WINDOW_FULLSCREEN|SDL_WINDOW_MINIMIZED|SDL_WINDOW_MAXIMIZED))return;
++  AckmanMenuSetWindowSize(AckmanMenuWindowMultiplier()+scale_step);
+ }
+ 
+ #define RESIZE_BORDER 20
+@@ -1924,7 +1894,8 @@
+ /* ── SDL_Renderer presenter ───────────────────────────────────────────────── */
+ 
+ static SDL_Renderer *g_renderer;
+-static SDL_Texture *g_texture;
++static SDL_Texture *g_texture,*g_internal_texture;
++static int g_internal_width,g_internal_height;
+ static SDL_Rect g_sdl_renderer_rect;
+ static SDL_Rect g_sdl_present_rect;
+ // A renderer switch must retain the frozen game image behind the HUD.
+@@ -1979,7 +1950,7 @@
+ 
+ static void SdlRenderer_Destroy(void) {
+   AckmanMenuRendererShutdown();
+-  SDL_DestroyTexture(g_texture);
++  SDL_DestroyTexture(g_texture);SDL_DestroyTexture(g_internal_texture);g_internal_texture=NULL;
+   SDL_DestroyRenderer(g_renderer);g_texture=NULL;g_renderer=NULL;
+ }
+ 
+@@ -2028,12 +1999,35 @@
+   g_ackman_locked_pixels=*pixels;g_ackman_locked_pitch=*pitch;
+ }
+ 
++// Keep PPU/raster buffers native; scale the completed image in an independent
++// nearest-neighbour render target. WindowSize never controls this texture.
++static SDL_Texture *AckmanInternalTexture(SDL_Rect *source) {
++  int scale=AckmanVideoInternalScale();
++  if(scale==1){*source=g_sdl_renderer_rect;return g_texture;}
++  int w=g_sdl_renderer_rect.w*scale,h=g_sdl_renderer_rect.h*scale;
++  if(!g_internal_texture || w!=g_internal_width || h!=g_internal_height) {
++    SDL_Texture *next=SDL_CreateTexture(g_renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_TARGET,w,h);
++    if(!next) {
++      g_config.window_scale=1;*source=g_sdl_renderer_rect;return g_texture;
++    }
++    SDL_DestroyTexture(g_internal_texture);g_internal_texture=next;
++    g_internal_width=w;g_internal_height=h;
++    SDL_SetTextureBlendMode(next,SDL_BLENDMODE_NONE);SDL_SetTextureScaleMode(next,SDL_SCALEMODE_NEAREST);
++    fprintf(stderr,"[menu] Internal resolution=%d texture=%dx%d\n",scale,w,h);
++  }
++  SDL_SetRenderTarget(g_renderer,g_internal_texture);
++  SDL_RenderTexture(g_renderer,g_texture,NULL,NULL);
++  SDL_SetRenderTarget(g_renderer,NULL);
++  *source=(SDL_Rect){0,0,w,h};return g_internal_texture;
++}
++
+ static void SdlRenderer_Present(void) {
++  SDL_Rect source;SDL_Texture *image=AckmanInternalTexture(&source);
+   SDL_SetRenderDrawColor(g_renderer,0,0,0,255);
+   SDL_RenderClear(g_renderer);
+   AckmanMenuDraw(g_renderer,false);
+   /* SDL3's SDL_RenderTexture takes SDL_FRect, not SDL_Rect. */
+-  snesrecomp_sdl_render_texture(g_renderer, g_texture, &g_sdl_renderer_rect,
++  snesrecomp_sdl_render_texture(g_renderer, image, &source,
+                                 &g_sdl_present_rect);
+   AckmanMenuDraw(g_renderer,true);
+   SDL_RenderPresent(g_renderer);
+@@ -2063,15 +2057,47 @@
+   &SdlRenderer_EndDraw,
+ };
+ 
++static void AckmanApplyAudioSettings(void) {
++  if(!g_config.enable_audio) {
++    SetAudioPaused(true);SDL_DestroyAudioStream(g_audio_stream);g_audio_stream=NULL;g_audio_device=0;
++    free(g_audiobuffer);g_audiobuffer=g_audiobuffer_cur=g_audiobuffer_end=NULL;
++    g_dialog_audio_dirty=true;fprintf(stderr,"[menu] Audio disabled\n");return;
++  }
++  SDL_AudioSpec old={0};if(g_audio_stream)SDL_GetAudioStreamFormat(g_audio_stream,&old,NULL);
++  SDL_AudioSpec spec={SDL_AUDIO_S16,2,g_config.audio_freq};
++  SDL_AudioStream *next=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,AudioStreamCallback,NULL);
++  int frames=(534*spec.freq+32040/2)/32040;
++  uint8 *buffer=next?calloc(frames*2*sizeof(int16),1):NULL;
++  if(!next || !buffer) {
++    SDL_DestroyAudioStream(next);free(buffer);g_config.enable_audio=g_audio_stream!=NULL;
++    if(old.freq)g_config.audio_freq=old.freq;
++    fprintf(stderr,"[menu] Audio change rejected; previous output retained\n");return;
++  }
++  SetAudioPaused(true);SDL_DestroyAudioStream(g_audio_stream);
++  free(g_audiobuffer);g_audiobuffer=g_audiobuffer_cur=g_audiobuffer_end=buffer;
++  g_audio_stream=next;g_audio_device=SDL_GetAudioStreamDevice(next);g_audio_channels=2;g_frames_per_block=frames;
++  RtlApuLock();RtlSetAudioOutputRate(spec.freq);g_audio_primed=false;RtlApuUnlock();
++  g_dialog_audio_dirty=true;
++  fprintf(stderr,"[menu] Audio enabled rate=%d frames=%d\n",spec.freq,frames);
++}
++
+ // Called only between completed presentations; no ImGui frame or texture is live.
+ static void AckmanApplyMenuSettings(void) {
+   unsigned changes=AckmanMenuTakeSettings();
++  if(changes&ACK_SETTINGS_SIZE) {
++    if(!g_config.fullscreen)SDL_SetWindowSize(g_window,g_config.window_width,g_config.window_height);
++    fprintf(stderr,"[menu] WindowSize=%dx%d\n",g_config.window_width,g_config.window_height);
++  }
++  if(changes&ACK_SETTINGS_AUDIO)AckmanApplyAudioSettings();
++  if(changes&ACK_SETTINGS_VOLUME)ApplyVolume();
+   if(changes&ACK_SETTINGS_RUNAHEAD)snes_runahead_set_frames(g_config.run_ahead);
+   if(changes&ACK_SETTINGS_FULLSCREEN) {
+     if(!SDL_SetWindowFullscreen(g_window,g_config.fullscreen!=0))
+       fprintf(stderr,"[menu] Fullscreen change failed: %s\n",SDL_GetError());
+     g_config.fullscreen=(SDL_GetWindowFlags(g_window)&SDL_WINDOW_FULLSCREEN)!=0;
+     g_win_flags=SDL_GetWindowFlags(g_window);
++    if(!g_config.fullscreen && g_config.window_width>0 && g_config.window_height>0)
++      SDL_SetWindowSize(g_window,g_config.window_width,g_config.window_height);
+   }
+   if(changes&ACK_SETTINGS_OUTPUT) {
+     int old=g_ackman_output_method;
+@@ -2475,6 +2501,7 @@
+         }
+       }
+ 
++      want_launcher=force_launcher && want_launcher;
+       if (want_launcher) {
+         host_report_breadcrumb("launcher: opening GUI");
+         RecompLauncherCSettings ls;
+@@ -2737,7 +2764,7 @@
+     g_win_flags ^= SDL_WINDOW_FULLSCREEN;
+ 
+   // Window scale (1=100%, 2=200%, 3=300%, etc.)
+-  g_current_window_scale = (g_config.window_scale == 0) ? 2 : IntMin(g_config.window_scale, kMaxWindowScale);
++  g_current_window_scale = AckmanMenuWindowMultiplier();
+ 
+   // audio_freq: Use common sampling rates (values higher than 48000 are not supported.)
+   if (g_config.audio_freq < 11025 || g_config.audio_freq > 48000)
+@@ -3613,8 +3640,7 @@
+                   (g_ppu_render_flags & kPpuRenderFlags_NewRenderer) != 0;
+       break;
+     case kKeys_ToggleWidescreen:
+-      g_config.ignore_aspect_ratio = !g_config.ignore_aspect_ratio;
+-      AckmanVideoSetWidescreen(g_config.ignore_aspect_ratio);
++      AckmanMenuSetWidescreen(!g_config.ignore_aspect_ratio);
+       host_report_breadcrumb("Ackman aspect: %s", AckmanVideoWidescreen() ? "adaptive widescreen" : "native 4:3");
+       if (g_paused) DrawPpuFrameWithPerf();
+       break;
+--- a/runner/src/desktop/mmx_config.c
++++ b/runner/src/desktop/mmx_config.c
+@@ -20,6 +20,7 @@
+ };
+ 
+ Config g_config;
++static bool s_widescreen_seen;
+ /* Set when a [KeyMap] line carried a binding this framework used to GENERATE
+  * as its default and has since changed; the line is read as the new default
+  * and WriteConfigFile rewrites it, so the file stops disagreeing with the
+@@ -421,7 +422,10 @@
+       return true;
+     } else if (StringEqualsNoCase(key, "NewRenderer")) {
+       return ParseBool(value, &g_config.new_renderer);
++    } else if (StringEqualsNoCase(key, "Widescreen")) {
++      s_widescreen_seen=true;return ParseBool(value, &g_config.ignore_aspect_ratio);
+     } else if (StringEqualsNoCase(key, "IgnoreAspectRatio")) {
++      if(s_widescreen_seen)return true;
+       return ParseBool(value, &g_config.ignore_aspect_ratio);
+     } else if (StringEqualsNoCase(key, "DisplayAspect")) {
+       if (StringEqualsNoCase(value, "4:3") ||
+@@ -443,7 +447,8 @@
+       g_config.fullscreen = (uint8)strtol(value, (char**)NULL, 10);
+       return true;
+     } else if (StringEqualsNoCase(key, "WindowScale")) {
+-      g_config.window_scale = (uint8)strtol(value, (char**)NULL, 10);
++      long scale=strtol(value,NULL,10);
++      g_config.window_scale=scale<1?1:scale>10?10:scale;
+       return true;
+     } else if (StringEqualsNoCase(key, "OutputMethod")) {
+       g_config.output_method = (StringEqualsNoCase(value, "SDL-Software") || StringEqualsNoCase(value, "Software")) ? kOutputMethod_SDLSoftware :
+@@ -532,10 +537,11 @@
+   if (!AckmanConfigSelect(filename))
+     fprintf(stderr, "[config] Unable to open/create %s\n", AckmanConfigPath());
+   g_config.window_width = 1344; g_config.window_height = 672;
+-  g_config.window_scale = 3; g_config.new_renderer = true;
++  g_config.window_scale = 1; g_config.new_renderer = true;
++  s_widescreen_seen=false;g_config.ignore_aspect_ratio=true;
+   g_config.enable_audio = true;
+   g_config.vsync = true;g_config.pause_when_inactive = true;
+-  g_config.volume = 80;
++  g_config.volume = 100;
+   /* Audio defaults match the values shipped in config.ini's [Sound]
+    * section. Without these a release with no config.ini next to the
+    * exe leaves audio_freq/audio_channels/audio_samples at 0, which
+@@ -647,7 +653,7 @@
+   NUMBER("Graphics", "WindowScale", g_config.window_scale);
+   NUMBER("Graphics", "Fullscreen", g_config.fullscreen);
+   NUMBER("Graphics", "NewRenderer", g_config.new_renderer);
+-  NUMBER("Graphics", "IgnoreAspectRatio", g_config.ignore_aspect_ratio);
++  NUMBER("Graphics", "Widescreen", g_config.ignore_aspect_ratio);
+   NUMBER("Graphics", "NoSpriteLimits", g_config.no_sprite_limits);
+   NUMBER("Sound", "EnableAudio", g_config.enable_audio);
+   NUMBER("Sound", "Volume", g_config.volume);

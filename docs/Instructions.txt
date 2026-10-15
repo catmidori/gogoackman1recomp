@@ -1,0 +1,1 @@
+Read README.md in the package root for setup, controls and licensing information.

@@ -1,0 +1,6 @@
+foreach(program "${ROUTING}" "${TIMELINE}")
+  execute_process(COMMAND "${program}" RESULT_VARIABLE status)
+  if(NOT status EQUAL 0)
+    message(FATAL_ERROR "Audio regression failed: ${program} (${status})")
+  endif()
+endforeach()

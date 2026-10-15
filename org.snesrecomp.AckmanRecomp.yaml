@@ -1,0 +1,117 @@
+app-id: org.snesrecomp.AckmanRecomp
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: AckmanRecomp
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+  - --socket=pulseaudio
+  - --device=all
+  - --env=SDL_FILE_DIALOG_DRIVER=portal
+cleanup:
+  - /include
+  - /lib/*.a
+  - /lib/cmake
+  - /lib/pkgconfig
+  - /share/man
+modules:
+  - name: zlib
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DZLIB_BUILD_SHARED=OFF
+      - -DZLIB_BUILD_STATIC=ON
+      - -DZLIB_BUILD_TESTING=OFF
+    sources:
+      - type: archive
+        url: https://zlib.net/fossils/zlib-1.3.2.tar.gz
+        sha256: bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
+  - name: SDL3
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DSDL_SHARED=ON
+      - -DSDL_STATIC=OFF
+      - -DSDL_TEST_LIBRARY=OFF
+      - -DSDL_TESTS=OFF
+      - -DSDL_EXAMPLES=OFF
+      - -DSDL_X11=ON
+      - -DSDL_WAYLAND=ON
+      - -DSDL_OPENGL=ON
+      - -DSDL_PULSEAUDIO=ON
+      - -DSDL_DBUS=ON
+      - -DSDL_HIDAPI=ON
+    sources:
+      - type: archive
+        url: https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
+        sha256: 12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785
+  - name: AckmanRecomp
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DACKMAN_FLATPAK=ON
+      - -DBUILD_TESTING=OFF
+      - -DSNESRECOMP_SDL3_FETCH=OFF
+      - -DZLIB_USE_STATIC_LIBS=ON
+      - -DZLIB_LIBRARY_RELEASE=/app/lib/libz.a
+      - -DZLIB_LIBRARY_DEBUG=/app/lib/libz.a
+      - -DZLIB_INCLUDE_DIR=/app/include
+    post-install:
+      - 'readelf -d /app/bin/AckmanRecomp > ackman-linkage.txt'
+      - '! grep -q "NEEDED.*libz.so" ackman-linkage.txt'
+      - 'test -f /app/share/applications/org.snesrecomp.AckmanRecomp.desktop'
+      - 'grep -Fx "Name=Go Go Ackman Recompiled" /app/share/applications/org.snesrecomp.AckmanRecomp.desktop'
+      - 'test -f /app/share/icons/hicolor/scalable/apps/org.snesrecomp.AckmanRecomp.png'
+    sources:
+      # Local generated sources/assets; personal/runtime data are not build inputs.
+      - type: dir
+        path: .
+        skip:
+          - .git
+          - .codex
+          - .agents
+          - .tools
+          - .flatpak-builder
+          - .flatpak-build
+          - .flatpak-repo
+          - dist
+          - releases
+          - private
+          - build*
+          - '*.exe'
+          - '*.flatpak'
+          - rom
+          - mods
+          - saves
+          - fallback
+          - screenshots
+          - config.ini
+          - last_run_report.json
+          - rom.cfg
+          - keybinds.ini
+          - external/snesrecomp
+      - type: file
+        path: rom/Instructions.txt
+        dest: rom
+      - type: file
+        path: mods/Instructions.txt
+        dest: mods
+      - type: file
+        path: saves/Instructions.txt
+        dest: saves
+      - type: git
+        url: https://github.com/RetroPortingToolKit/snesrecomp.git
+        commit: e119994bcde03dec95f9ebaeeda305d72a6668b2
+        dest: external/snesrecomp
+      # Runs after both source trees are extracted, before CMake/Ninja.
+      - type: shell
+        commands:
+          - python3 scripts/normalize_patches.py --patches patches --framework external/snesrecomp
+          - cmake -P cmake/AckmanPatches.cmake
+          - python3 scripts/normalize_build_timestamps.py
