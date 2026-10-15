@@ -38,9 +38,9 @@ In the software's menu, when clicking the "Open .ips file" button in the [Mods] 
 Use **Mods → Load .ips file** to convert a supported patch into a native package, then transfer it to **Active**. Activate one translation at a time. These hashes identify the IPS inputs, not the original ROM or generated package.
 
 | Name | MD5 Hash of the .ips file | Where to find it |
-| --- | --- |
-| English translation by Ackman Translations | `0dd930e3738524cc4f8a3d83326616a9` | | https://www.romhacking.net/translations/363/ |
-| Brazilian Portuguese translation by E2P Traduções | `7cc729dde829946791d18a2b27e48da6` | | https://romhackers.org/traducoes/console/super-nes/go-go-ackman-e2p-traducoes/ |
+| --- | --- | --- |
+| English translation by Ackman Translations | `0dd930e3738524cc4f8a3d83326616a9` | https://www.romhacking.net/translations/363/ |
+| Brazilian Portuguese translation by E2P Traduções | `7cc729dde829946791d18a2b27e48da6` | https://romhackers.org/traducoes/console/super-nes/go-go-ackman-e2p-traducoes/ |
 
 These hashes match [`src/ackman_translation.h`](src/ackman_translation.h) and the supplied IPS files. The PT-BR converter applies the embedded English base before the Portuguese overlay in memory, producing one self-contained package. Unknown IPS files use a bounded native fallback; conversion alone does not establish gameplay compatibility. See [translation conversion](docs/TRANSLATION-CONVERSION.md) and [native conversion](docs/NATIVE-TRANSLATION.md).
 
