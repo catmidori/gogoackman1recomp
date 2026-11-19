@@ -8,6 +8,16 @@ execute_process(COMMAND "${GIT_EXECUTABLE}" -c "safe.directory=${SNESRECOMP_ROOT
 if(NOT ACTUAL_REV STREQUAL EXPECTED_REV)
   message(FATAL_ERROR "Framework revision differs from framework.lock")
 endif()
+# A submodule checked out with core.autocrlf=true has CRLF targets, and the LF
+# patches then fail to apply. Convert only the patch targets to LF first. The
+# normalizer rewrites a file only when it contains CRLF, so an already-patched
+# tree keeps its timestamps and Ninja does not loop on runner.cmake.
+if(NOT Python3_EXECUTABLE)
+  find_program(Python3_EXECUTABLE NAMES python3 python REQUIRED)
+endif()
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${ACKMAN_PATCH_SOURCE_ROOT}/scripts/normalize_patches.py"
+  --patches "${ACKMAN_PATCH_SOURCE_ROOT}/patches" --framework "${SNESRECOMP_ROOT}"
+  COMMAND_ERROR_IS_FATAL ANY)
 # Keep git apply from reintroducing CRLF on hosts with core.autocrlf=true.
 # These settings are scoped to this invocation; user/global Git config is intact.
 set(ACKMAN_PATCH_GIT "${GIT_EXECUTABLE}" -c "safe.directory=${SNESRECOMP_ROOT}"
