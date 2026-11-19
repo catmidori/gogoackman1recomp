@@ -23,6 +23,9 @@ releases/
 config.ini
 *.sav
 saves/GGA1_autosave.sav
+*.sfc
+*.ips
+*.snesmod
 
 # Crash dumps, logs and private AI cache
 private/
