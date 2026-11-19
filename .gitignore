@@ -33,3 +33,6 @@ crash_minidump*.dmp
 .vs/
 .vscode/
 .idea/
+
+# Local-only Markdown with machine paths (see AGENTS.md)
+HANDOFF.md
