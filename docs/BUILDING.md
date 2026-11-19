@@ -56,13 +56,13 @@ Rust is optional: scripts select SNESRecomp's Python analyzer. Its Rust analyzer
 From the project root in PowerShell:
 
 ```powershell
-.\scripts\bootstrap.ps1 -Rom 'R:\ChatGPT\Go Go Ackman (Japan).sfc'
+.\scripts\bootstrap.ps1 -Rom '<path-to>\Go Go Ackman (Japan).sfc'
 ```
 
 Bootstrap downloads the framework when needed, pins its commit, and regenerates C. For subsequent regeneration:
 
 ```powershell
-python scripts/regen.py --rom 'R:/ChatGPT/Go Go Ackman (Japan).sfc'
+python scripts/regen.py --rom '<path-to>/Go Go Ackman (Japan).sfc'
 ```
 
 `rom_identity.txt` defines the fixed identity. Do not change its hash merely to bypass rejection. Different revisions require their own analysis/validation. A `.smc` with an optional 512-byte copier header and identical normalized image receives the same SHA-256.
@@ -90,7 +90,7 @@ This seed does not describe every jump table, WRAM routine, or DB/DP/M/X depende
 
 ```powershell
 python external/snesrecomp/snesrecomp_cli.py generate `
-  --rom 'R:/ChatGPT/Go Go Ackman (Japan).sfc' `
+  --rom '<path-to>/Go Go Ackman (Japan).sfc' `
   --cfg-dir recomp --out-dir src/gen --funcs-h recomp/funcs.h `
   --project-root . --cfg-roots --analysis-backend python `
   --expected-sha256 e8a33b6c8e15cf0aa60e9694471a51926fb97ad895d4714384c6abff28a33a1f
@@ -162,7 +162,7 @@ cmake -S . -B build-msvc -G 'Visual Studio 17 2022' -A x64
 cmake --build build-msvc --config RelWithDebInfo --parallel 6
 ctest --test-dir build-msvc -C RelWithDebInfo --output-on-failure
 Copy-Item config.ini build-msvc/RelWithDebInfo/config.ini
-.\build-msvc\RelWithDebInfo\AckmanRecomp.exe 'R:\ChatGPT\Go Go Ackman (Japan).sfc'
+.\build-msvc\RelWithDebInfo\AckmanRecomp.exe '<path-to>\Go Go Ackman (Japan).sfc'
 ```
 
 With installed SDL3, add `-DSNESRECOMP_SDL3_FETCH=OFF` and its path or a vcpkg toolchain. Keep compiler build directories separate.
@@ -174,7 +174,7 @@ cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build-mingw --parallel 6
 ctest --test-dir build-mingw --output-on-failure
 Copy-Item config.ini build-mingw/config.ini
-.\build-mingw\AckmanRecomp.exe 'R:\ChatGPT\Go Go Ackman (Japan).sfc'
+.\build-mingw\AckmanRecomp.exe '<path-to>\Go Go Ackman (Japan).sfc'
 ```
 
 For broken Windows Python aliases, set `-DPython3_EXECUTABLE=C:/caminho/real/python.exe`. Offline builds can use predownloaded dependencies and `-DSNESRECOMP_SDL3_SOURCE_DIR=C:/fontes/SDL3-3.4.10`. CMake should confirm `SDL3 desktop backend`. Static SDL needs no SDL3.dll; shared SDL uses the helper to copy its DLL.

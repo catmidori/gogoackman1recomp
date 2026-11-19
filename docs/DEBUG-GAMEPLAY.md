@@ -2,7 +2,7 @@
 
 Run from PowerShell:
 
-.\scripts\play-debug.ps1 -Rom 'R:\ChatGPT\Go Go Ackman (Japan).sfc'
+.\scripts\play-debug.ps1 -Rom '<path-to>\Go Go Ackman (Japan).sfc'
 
 Replace the PCM prefix with your own path. For example, `D:\Music\ackman-7.pcm`
 uses prefix `D:\Music\ackman`. Files must be MSU1 PCM, with their header;

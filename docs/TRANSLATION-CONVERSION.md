@@ -24,7 +24,7 @@ are already unheadered offsets and must **not** be shifted by 512 bytes.
 ## Conversion
 
 ```powershell
-python scripts/convert_translation.py --ips 'R:\ChatGPT\Ackman1e.ips'
+python scripts/convert_translation.py --ips '<path-to>\Ackman1e.ips'
 ```
 
 Optional `--rom` and `--output` arguments select other filesystem locations.
@@ -99,8 +99,8 @@ The optional local positive integration test uses supplied files without
 distributing copyrighted fixtures:
 
 ```powershell
-$env:ACKMAN_TEST_OFFICIAL_IPS = 'R:/ChatGPT/Ackman1e.ips'
-$env:ACKMAN_TEST_STOCK_ROM = 'R:/ChatGPT/snes_decomp/rom/Go Go Ackman (Japan).sfc'
+$env:ACKMAN_TEST_OFFICIAL_IPS = '<path-to>/Ackman1e.ips'
+$env:ACKMAN_TEST_STOCK_ROM = 'rom/Go Go Ackman (Japan).sfc'
 ctest --test-dir build-validation -R '^menu_persistence$' --output-on-failure
 ```
 

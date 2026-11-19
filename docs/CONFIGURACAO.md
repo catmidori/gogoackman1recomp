@@ -108,9 +108,9 @@ Adaptive mode restores up to 64 pixels per side under the same scene policies, m
 Validation: **12/12 CTests**, including 500 geometry/VRAM-preserving switches, and a separate **1,000-frame smoke**. Integration ran **6,000 frames** across two fixtures (stage 1 and car floor), comparing adaptive, native, and alternating modes. **400 SDL-pump toggles** used a shortcut remapped to F9. RAM/VRAM/OAM/SPC and central pixels remained identical; captures confirmed 256/384 widths. These headless checks do not measure perceived smoothness or physical tearing. The complete 51-save regression was not repeated.
 
 ```powershell
-& C:/msys64/mingw64/bin/python.exe scripts/validate_aspect_toggle.py `
+& python scripts/validate_aspect_toggle.py `
   --exe build-validation/AckmanRecomp.exe `
-  --rom 'R:/ChatGPT/Go Go Ackman (Japan).sfc' `
+  --rom '<path-to>/Go Go Ackman (Japan).sfc' `
   --out private/nova-validacao-aspecto
 ```
 

@@ -10,7 +10,7 @@
 
 ```powershell
 python tests/test_tools.py
-python scripts/regen.py --rom 'R:/ChatGPT/Go Go Ackman (Japan).sfc' --verify-only
+python scripts/regen.py --rom '<path-to>/Go Go Ackman (Japan).sfc' --verify-only
 ctest --test-dir build-mingw --output-on-failure
 ```
 
@@ -24,7 +24,7 @@ Audit dependencies with `dumpbin /dependents` (MSVC) or `objdump -p` (MinGW). Ve
 $env:SNESRECOMP_RUN_FRAMES = '600'
 $env:SNESRECOMP_TIER2_CAPTURE = '1'
 $env:ACKMAN_TRACE = "$PWD/private/boot.csv"
-.\build-mingw\AckmanRecomp.exe --no-launcher 'R:/ChatGPT/Go Go Ackman (Japan).sfc'
+.\build-mingw\AckmanRecomp.exe --no-launcher '<path-to>/Go Go Ackman (Japan).sfc'
 ```
 
 Confirm image, movement, music, Start, and transitions. Exercise every stage, boss, death, continue, menu, credits, and reset. Record fallback PCs and dynamic AOT/LLE counters. Function counts do not measure native execution percentage. A gap-free initial route does not establish all-route coverage. Watchdog failures, invalid opcodes, or an unbalanced stack fail this gate.
@@ -64,7 +64,7 @@ The historical frame model had not yet passed this gate. Correct it before claim
 
 ```powershell
 .\scripts\soak.ps1 -Exe .\build-mingw\AckmanRecomp.exe `
-  -Rom 'R:/ChatGPT/Go Go Ackman (Japan).sfc' -Seconds 28800
+  -Rom '<path-to>/Go Go Ackman (Japan).sfc' -Seconds 28800
 ```
 
 The script samples Private Bytes, Working Set, handles, and threads each second; it bounds runtime and flags timeout/nonzero exit. It does not validate gameplay. During the session resize, maximize/minimize, alt-tab, change audio, hotplug, save/load, and reenter menus. Use a reproducible input route; staying at the title screen is not complete stress.
