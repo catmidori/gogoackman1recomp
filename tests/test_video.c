@@ -120,6 +120,13 @@ int main(void) {
     query_margins(64,&l,&r); CHECK(l==64 && r==64);
     word(0x1124,0x57); word(0x1126,0x9447); query_margins(64,&l,&r); CHECK(l==0 && r==0);
     word(0x1126,0xbb63); query_margins(64,&l,&r); CHECK(l==64 && r==64);
+    /* After attract mode the menu and intro keep the demo's stale selector
+     * and stride; they must still wrap like after a cold boot. */
+    /* RAM from the user's post-attract menu save: camera $0100,$0100. */
+    word(0x400,0x0200); word(0x40c,0x2800); word(0x402,0x100); word(0x406,0x100);
+    word(0x1126,0xbda0); query_margins(64,&l,&r); CHECK(l==64 && r==64);
+    word(0x1126,0x9578); g_ram[0x274]=0x79; query_margins(64,&l,&r); CHECK(l==64 && r==64);
+    word(0x400,0); word(0x40c,0x6000); word(0x402,386); word(0x406,272); g_ram[0x274]=0x39;
     word(0x400,0x0200); word(0x1126,0xabd9); word(0x40c,0x2800); word(0x406,256);
     query_margins(64,&l,&r); CHECK(l==64 && r==64);
     word(0x400,0x0100); word(0x1126,0xa483); word(0x406,272);
