@@ -7,6 +7,7 @@ The 51 saves provided were loaded without changing the originals. Selectors belo
 |Banpresto|0000 / 9447, heading $1124 until 0037|Full background|
 |Opening after the logo|0000 / 9447, rear position|4:3|
 |Title|0000 / BB63|Wrapping|
+|Main menu, opening story after Start|any / BDA0, 9578|Wrapping (script only: attract mode leaves a stale $0400/$040C)|
 |Dialogue before the first phase|0000 / A483, stride zero|4:3|
 |Stage 1 phase 2|0200 / A483|Real Map and Limits|
 |Stage 2 phase 3, up/down|0A00, 0B00 / AA11|Strides 2000, 1800|

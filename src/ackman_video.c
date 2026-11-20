@@ -174,6 +174,11 @@ static int scene_policy(void) {
             case 0xb523: return g_ram[0x274]==0x79 ? SCENE_END_LANDSCAPE : SCENE_END;
         }
     }
+    /* $BDA0 (main menu) and $9578 (opening story after Start) load no map.
+     * Attract mode's demo leaves its stage selector ($0400=$0200) and map
+     * stride ($040C=$2800) in WRAM until the next stage loads, which defeated
+     * the stride==0 fallback below. Match these scripts regardless of both. */
+    if(script==0xbda0 || script==0x9578) return SCENE_WRAP;
     if(selector==0 && script==0x9447) return word(0x1124)<=0x37 ? 1 : 0;
     if(selector==0 && script==0xbb63) return 1;
     if(selector==0 && script==0xa483 && !word(0x40c)) return 0;
