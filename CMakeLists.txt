@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(AckmanRecomp VERSION 0.1.0 LANGUAGES C CXX)
+project(AckmanRecomp VERSION 1.0.1 LANGUAGES C CXX)
 include(GNUInstallDirs)
 include(CTest)
 option(ACKMAN_FLATPAK "Use persistent XDG directories inside the Flatpak sandbox" OFF)
@@ -88,7 +88,7 @@ target_include_directories(AckmanRecomp PRIVATE ${SNESRECOMP_RUNNER_INCLUDE_DIRS
   "${CMAKE_CURRENT_SOURCE_DIR}/recomp")
 target_link_libraries(AckmanRecomp PRIVATE ${SNESRECOMP_RUNNER_LIBRARIES})
 target_compile_definitions(AckmanRecomp PRIVATE SNES_GAME_TITLE="Go Go Ackman"
-  SNES_GAME_VERSION="0.1.0-experimental" SNESRECOMP_CLOCKED_BEAM=1)
+  SNES_GAME_VERSION="1.0.1" SNESRECOMP_CLOCKED_BEAM=1)
 snesrecomp_rom_identity(AckmanRecomp "${CMAKE_CURRENT_SOURCE_DIR}/rom_identity.txt")
 snesrecomp_target_generated_code(AckmanRecomp "${CMAKE_CURRENT_SOURCE_DIR}/src/gen")
 # Mods are supplied by users at runtime; release builds have no bundled catalog.
