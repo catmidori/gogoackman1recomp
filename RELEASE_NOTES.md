@@ -1,3 +1,19 @@
+# Go Go Ackman Recompiled v1.0.1
+
+A bug-fix release. Windows and Linux builds were tested on Windows 11 and
+Linux CachyOS.
+
+## Fixes
+
+- Widescreen after attract mode: when no button was pressed on the "press
+  start" screen or the main menu, the game entered attract mode, and
+  afterwards the main menu and the first story screen after selecting
+  "Start" fell back to 4:3 even with widescreen enabled. Both now stay in
+  widescreen.
+- The build is no longer labeled "experimental"; it reports version 1.0.1.
+
+---
+
 # Go Go Ackman Recompiled v1.0
 
 The first public release brings Go Go Ackman to Windows and Linux as a
